@@ -9,6 +9,7 @@ Download dataset and save clean images
 
 from datasets import load_dataset
 import os
+import sys
 
 #dataset is a Dataset object
 #Each item inside the dataset is a dictionary
@@ -44,4 +45,5 @@ def download_and_save(limit=50):
 
 
 if __name__ == "__main__":
-    download_and_save()
+    limit = int(sys.argv[1]) if len(sys.argv) > 1 else 50
+    download_and_save(limit) # allow user to specify dataset size from command line
