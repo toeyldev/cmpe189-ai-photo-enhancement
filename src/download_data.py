@@ -35,11 +35,15 @@ def download_and_save(limit=50):
 
     os.makedirs("data/clean", exist_ok = True) #exist_ok=True = avoid errors if folder exists
 
-    for i, item in enumerate(dataset):
-        img = item["image"] #key -> image as value on dict
+    for i in range(len(dataset)):
+        try:
+            item = dataset[i]
+            img = item["image"] #key -> image as value on dict
 
-        #save image into the folder
-        img.save(f"data/clean/image_{i}.png")
+            #save image into the folder
+            img.save(f"data/clean/image_{i}.png")
+        except Exception as e:
+            print(f"Skipping item {i}: {e}")
 
     print("Done saving clean images.")
 
