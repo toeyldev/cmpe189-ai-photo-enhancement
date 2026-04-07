@@ -24,7 +24,7 @@ dataset
    }
 """
 
-def download_and_save(limit=10):
+def download_and_save(limit=50):
 
     dataset = load_dataset("yangtao9009/Flickr2K", split=f"train[:{limit}]")
 
