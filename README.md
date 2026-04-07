@@ -10,9 +10,13 @@
 pip install -r requirements.txt
 
 ## Run
-python src/download_data.py
-python src/degrade_images.py
-python src/visualize.py
+Python scripts:
+- `python src/download_data.py`
+- `python src/degrade_images.py`
+- `python src/visualize.py`
+
+Jupyter Notebook:
+- `jupyter notebook`
 
 ## Note
 Denoising model will be implemented in a later milestone.
