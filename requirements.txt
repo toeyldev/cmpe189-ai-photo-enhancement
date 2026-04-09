@@ -2,3 +2,6 @@ opencv-python
 matplotlib
 scikit-image
 datasets
+notebook
+torch
+torchvision
