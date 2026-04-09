@@ -1,183 +1,182 @@
 """
 Evaluate DnCNN model using PSNR and SSIM.
 Also saves enhanced images for visualization.
+
+Usage (from project root):
+    python src/evaluate_model.py
+    python src/evaluate_model.py --weights model/weights/dncnn_color_blind.pth
 """
 
 import os
+import sys
+import argparse
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pandas as pd
 import torch
+
 from skimage.metrics import peak_signal_noise_ratio as psnr
 from skimage.metrics import structural_similarity as ssim
 
+# allow imports from src/
+SRC = Path(__file__).resolve().parent
+sys.path.insert(0, str(SRC))
 
-# --- Compute metrics function ---
+from dncnn_pytorch import DnCNN
+from dncnn_weights import ensure_weights
+
+
+# --- Compute metrics ---
 def compute_metrics(clean_img, compare_img):
     """
-    clean_img    → ground truth image
-    compare_img  → degraded OR denoised image
+    Compute PSNR and SSIM between two images.
+
+    clean_img    → ground truth RGB uint8 NumPy array
+    compare_img  → degraded OR denoised RGB uint8 NumPy array
 
     PSNR: measures pixel-level difference (higher is better)
-    SSIM: measures structural similarity (range 0–1, higher is better)
+    SSIM: measures structural similarity (range 0-1, higher is better)
     """
     psnr_val = psnr(clean_img, compare_img)
     ssim_val = ssim(clean_img, compare_img, channel_axis=2)
     return psnr_val, ssim_val
 
 
-# --- Direct execution (same as notebook) ---
-
-clean_dir    = "data/clean"
-degraded_dir = "data/degraded"
-enhanced_dir = "data/enhanced"
-
-os.makedirs(enhanced_dir, exist_ok=True)
-
-#create a list (of dictionary later)
-results = []
-
-for fileName in sorted(os.listdir(clean_dir)):
-
-    # --- Load images ---
-    clean_path    = os.path.join(clean_dir, fileName)
-    degraded_path = os.path.join(degraded_dir, fileName)
-
-    clean    = cv2.imread(clean_path)
-    degraded = cv2.imread(degraded_path)
-
-    if clean is None or degraded is None:
-        print(f"Skipping {fileName} - could not read file")
-        continue
-
-    # --- Convert BGR → RGB ---
-    # cv2.cvtColor() always returns a 3D NumPy array
-
-    clean_rgb    = cv2.cvtColor(clean, cv2.COLOR_BGR2RGB)
-    degraded_rgb = cv2.cvtColor(degraded, cv2.COLOR_BGR2RGB)
-
-
-
-    # --- Run DnCNN inference ---
-    # normalize → tensor → model → back to uint8 RGB
-
+# --- Load model ---
+def load_model(weights_path=None):
     """
-    min-max formula:  (x - min) / (max - min)
-                = (x - 0)   / (255 - 0)
-                = x / 255
+    Load pretrained DnCNN model onto GPU if available, else CPU.
 
-    Since min is always 0 for images, the formula simplifies to just / 255.0.
+    Architecture: 20 layers, channels=3 (RGB), features=64, no BatchNorm
+    Confirmed from dncnn_color_blind.pth weight file inspection.
     """
+    # detect GPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-    img_norm = degraded_rgb / 255.0   # min-max normalization to [0, 1]
+    # download weights if missing
+    weights_path = ensure_weights(weights_path)
+
+    # load state dict
+    state_dict = torch.load(weights_path, map_location=device)
+    if "params" in state_dict:
+        state_dict = state_dict["params"]
+
+    # build model matching exact weight file architecture
+    model = DnCNN(channels=3, num_of_layers=20, features=64)
+    model.load_state_dict(state_dict, strict=True)
+    model = model.to(device)
+    model.eval()
+
+    print(f"DnCNN model loaded successfully on {device}")
+    return model, device
 
 
-    # NOW, img_tensor has 4 dimensions, still on CPU (default)
-    img_tensor = torch.from_numpy(img_norm).permute(2, 0, 1).unsqueeze(0).float()
-
-    # unsqueeze(0) → adds batch dimension at front
-    # (C, H, W) → (1, C, H, W)
-    # batch size is 1 since we process one image at a time
-
+# --- Run evaluation ---
+def run_evaluation(weights_path=None, results_csv="results_table.csv"):
     """
-    torch.from_numpy(img_norm)   # (H, W, C) → tensor (H, W, C)
-    .permute(2, 0, 1)            # (H, W, C) → (C, H, W)
-    .unsqueeze(0)                # (C, H, W) → (1, C, H, W)
-    .float()                     # convert to float32
+    Run DnCNN inference on all images in data/degraded/.
+    Saves enhanced images to data/enhanced/.
+    Computes PSNR and SSIM for each image.
+    Writes results to results_table.csv.
     """
+    clean_dir    = "data/clean"
+    degraded_dir = "data/degraded"
+    enhanced_dir = "data/enhanced"
 
-    # torch.no_grad():
-    # → do not compute gradients (faster, less memory)
-    # gradients are only needed during training
+    os.makedirs(enhanced_dir, exist_ok=True)
 
-    with torch.no_grad():
-        output = model(img_tensor)  
-        # model must be defined (Toey's pretrained DnCNN)
+    # load model
+    model, device = load_model(weights_path)
 
+    results = []
 
-    # --- Convert output tensor back to image ---
+    for fileName in sorted(os.listdir(clean_dir)):
 
-    """
-    output.squeeze()      # (1, C, H, W) → (C, H, W)
-    .permute(1, 2, 0)     # (C, H, W) → (H, W, C)
-    .numpy()              # tensor → NumPy array
-    """
+        # --- Load images ---
+        clean_path    = os.path.join(clean_dir, fileName)
+        degraded_path = os.path.join(degraded_dir, fileName)
 
-    """
-    unsqueeze → adds dimension
-    squeeze   → removes dimension (only if size = 1)
-    """
+        clean    = cv2.imread(clean_path)
+        degraded = cv2.imread(degraded_path)
 
-    """
-    Forward (NumPy → Tensor):          Backward (Tensor → NumPy):
-    (H, W, C)                          (1, C, H, W)
-      ↓ permute(2, 0, 1)                 ↓ squeeze()
-    (C, H, W)                          (C, H, W)
-      ↓ unsqueeze(0)                     ↓ permute(1, 2, 0)
-    (1, C, H, W)                       (H, W, C)
-      ↓ float()                          ↓ numpy()
-    """
+        if clean is None or degraded is None:
+            print(f"Skipping {fileName} - could not read file")
+            continue
 
-    denoised = output.squeeze().permute(1, 2, 0).numpy()
+        # --- Convert BGR → RGB ---
+        # cv2.cvtColor() always returns a 3D NumPy array
+        clean_rgb    = cv2.cvtColor(clean, cv2.COLOR_BGR2RGB)
+        degraded_rgb = cv2.cvtColor(degraded, cv2.COLOR_BGR2RGB)
 
-    # undo normalization: [0,1] → [0,255]
-    denoised = np.clip(denoised * 255, 0, 255).astype(np.uint8)
+        # --- Run DnCNN inference ---
+        # min-max normalization: [0, 255] → [0.0, 1.0]
+        img_norm = degraded_rgb / 255.0
 
+        # NumPy (H, W, C) → PyTorch tensor (1, C, H, W)
+        img_tensor = torch.from_numpy(img_norm).permute(2, 0, 1).unsqueeze(0).float()
 
-    # --- Save enhanced image for Ryan ---
-    save_path = os.path.join(enhanced_dir, fileName)
+        # move tensor to GPU
+        img_tensor = img_tensor.to(device)
 
-    # OpenCV uses BGR, so convert RGB → BGR before saving
-    denoised_bgr = cv2.cvtColor(denoised, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(save_path, denoised_bgr)
+        # inference (no gradient tracking needed)
+        with torch.no_grad():
+            output = model(img_tensor)
 
+        # move output back to CPU and convert to NumPy
+        # (1, C, H, W) → (H, W, C) → uint8
+        denoised = output.squeeze().cpu().permute(1, 2, 0).numpy()
+        denoised = np.clip(denoised * 255, 0, 255).astype(np.uint8)
 
+        # --- Save enhanced image ---
+        save_path = os.path.join(enhanced_dir, fileName)
+        # OpenCV uses BGR, so convert RGB → BGR before saving
+        denoised_bgr = cv2.cvtColor(denoised, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(save_path, denoised_bgr)
 
-    # --- Compute metrics ---
+        # --- Compute metrics ---
+        # baseline: how bad is degraded vs clean
+        psnr_degraded, ssim_degraded = compute_metrics(clean_rgb, degraded_rgb)
 
-    # baseline: degraded vs clean
-    psnr_degraded, ssim_degraded = compute_metrics(clean_rgb, degraded_rgb)
+        # model output: how good is denoised vs clean
+        psnr_denoised, ssim_denoised = compute_metrics(clean_rgb, denoised)
 
-    # model output: denoised vs clean
-    psnr_denoised, ssim_denoised = compute_metrics(clean_rgb, denoised)
+        results.append({
+            "image"         : fileName,
+            "PSNR_degraded" : round(psnr_degraded, 2),
+            "PSNR_denoised" : round(psnr_denoised, 2),
+            "SSIM_degraded" : round(ssim_degraded, 4),
+            "SSIM_denoised" : round(ssim_denoised, 4),
+        })
 
-    # results is a list of dictionaries (each loop = one row)
-    # SSIM uses more decimals because range is 0–1
+        print(f"{fileName}  PSNR: {psnr_degraded:.2f} → {psnr_denoised:.2f}  SSIM: {ssim_degraded:.4f} → {ssim_denoised:.4f}")
 
-    results.append({
-        "image"         : fileName,
-        "PSNR_degraded" : round(psnr_degraded, 2),
-        "PSNR_denoised" : round(psnr_denoised, 2),
-        "SSIM_degraded" : round(ssim_degraded, 4),
-        "SSIM_denoised" : round(ssim_denoised, 4),
-    })
+    # --- Build results table ---
+    df = pd.DataFrame(results)
 
+    # compute average row
+    avg_row = df.mean(numeric_only=True).round(4)
+    avg_row["image"] = "AVERAGE"
+    df = pd.concat([df, avg_row.to_frame().T], ignore_index=True)
 
-# --- Build table ---
+    print("\n" + df.to_string(index=False))
 
-# list of dict → pandas DataFrame
-df = pd.DataFrame(results)
+    # save to CSV
+    df.to_csv(results_csv, index=False)
+    print(f"\nSaved results to {results_csv}")
 
-# compute averages (skip "image" column)
-avg_row = df.mean(numeric_only=True).round(4)
-
-# restore missing "image" label
-avg_row["image"] = "AVERAGE"
-
-"""
-avg_row.to_frame()   → Series → DataFrame (column)
-.T                   → transpose → row
-pd.concat()          → append to table
-"""
-
-df = pd.concat([df, avg_row.to_frame().T], ignore_index=True)
-
-
-# display table
-print(df.to_string(index=False))
+    return df
 
 
-# save to CSV (for report)
-df.to_csv("results_table.csv", index=False)
+# --- Direct execution ---
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Evaluate DnCNN on degraded images.")
+    parser.add_argument("--weights", type=str, default=None,
+                        help="Path to dncnn_color_blind.pth (auto-download if missing)")
+    parser.add_argument("--results", type=str, default="results_table.csv",
+                        help="Output CSV path")
+    args = parser.parse_args()
 
-print("Saved results to results_table.csv")
+    run_evaluation(weights_path=args.weights, results_csv=args.results)
