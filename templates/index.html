@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<!--
+  CMPE189 web UI for the photo enhancement Flask app (app.py).
+
+  User flow:
+    1) Pick an image file and a model (DnCNN or SwinIR).
+    2) Submit intercepts the normal form navigation; we POST multipart data to /enhance.
+    3) On success the server returns a PNG file; JavaScript triggers a browser download.
+    4) On error the server returns JSON { "error": "..." }; we show that text under the button.
+
+  Styling is self-contained (no separate static/) so the template is one file for check-in simplicity.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Photo enhancement — DnCNN &amp; SwinIR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- Page look: dark theme, single column, readable on phones (viewport meta above). -->
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a222d;
+      --border: #2d3a4a;
+      --text: #e8eef4;
+      --muted: #8b9cb3;
+      --accent: #3d9cf5;
+      --accent-dim: #2563a8;
+      --success: #34d399;
+      --err: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+    }
+    h1 {
+      font-size: 1.65rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.35rem;
+    }
+    .sub {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    input[type="file"] {
+      width: 100%;
+      padding: 0.75rem;
+      background: var(--bg);
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    input[type="file"]::file-selector-button {
+      margin-right: 0.75rem;
+      padding: 0.4rem 0.75rem;
+      border: none;
+      border-radius: 6px;
+      background: var(--accent-dim);
+      color: var(--text);
+      font-family: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .field { margin-bottom: 1.25rem; }
+    select {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 1rem;
+    }
+    button[type="submit"] {
+      width: 100%;
+      margin-top: 0.25rem;
+      padding: 0.85rem 1rem;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(165deg, var(--accent), var(--accent-dim));
+      color: #fff;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button[type="submit"]:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .hint {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 1rem;
+    }
+    .hint code {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.8rem;
+      background: var(--bg);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+    }
+    #status {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      min-height: 1.4em;
+    }
+    #status.error { color: var(--err); }
+    #status.ok { color: var(--success); }
+    footer {
+      margin-top: 2rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AI photo enhancement</h1>
+    <p class="sub">Upload a noisy RGB image, choose a model, then download the denoised result.</p>
+
+    <div class="card">
+      <!-- novalidate: we validate in JS and show messages in #status (consistent UX). -->
+      <form id="form" novalidate>
+        <!-- Field name "image" must match request.files["image"] in app.py. -->
+        <div class="field">
+          <label for="image">Image</label>
+          <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/bmp,.tif,.tiff" required />
+        </div>
+        <!-- value is sent as form field "model" → request.form.get("model") in app.py. -->
+        <div class="field">
+          <label for="model">Model</label>
+          <select id="model" name="model">
+            <option value="dncnn">DnCNN (fast, CNN)</option>
+            <option value="swinir">SwinIR (heavier, transformer)</option>
+          </select>
+        </div>
+        <button type="submit" id="btn">Enhance &amp; download</button>
+      </form>
+      <p id="status" role="status"></p>
+      <p class="hint"><strong>DnCNN</strong> is tuned for Gaussian-style camera noise; very heavy or “salt &amp; pepper” noise may still look similar after processing.</p>
+      <p class="hint"><strong>SwinIR</strong> needs <a href="https://git-scm.com/download/win" style="color:var(--accent);">Git</a> installed; the first run clones the SwinIR repo into your project folder and downloads weights (can take a few minutes).</p>
+    </div>
+
+    <footer>CMPE189 · Flask + PyTorch</footer>
+  </div>
+
+  <script>
+    const form = document.getElementById("form");
+    const btn = document.getElementById("btn");
+    const statusEl = document.getElementById("status");
+
+    /** Show a line of feedback under the button (plain, .error, or .ok for color). */
+    function setStatus(msg, cls) {
+      statusEl.textContent = msg || "";
+      statusEl.className = cls || "";
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault(); // keep user on this page; we talk to Flask via fetch()
+      const fileInput = document.getElementById("image");
+      const model = document.getElementById("model").value;
+      if (!fileInput.files || !fileInput.files[0]) {
+        setStatus("Choose an image file.", "error");
+        return;
+      }
+      setStatus("Running enhancement…", "");
+      btn.disabled = true;
+
+      // Multipart body: same field names the Flask route expects ("image", "model").
+      const fd = new FormData();
+      fd.append("image", fileInput.files[0]);
+      fd.append("model", model);
+
+      try {
+        const res = await fetch("/enhance", { method: "POST", body: fd });
+        const ct = res.headers.get("content-type") || "";
+
+        // 4xx/5xx: app.py returns JSON { error: "..." } for most failures.
+        if (!res.ok) {
+          let msg = res.statusText;
+          if (ct.includes("application/json")) {
+            const j = await res.json();
+            if (j.error) msg = j.error;
+          }
+          setStatus(msg, "error");
+          return;
+        }
+
+        // 200 + image/png: binary body → temporary object URL → synthetic <a download>.
+        const blob = await res.blob();
+        const cd = res.headers.get("Content-Disposition") || "";
+        let name = "enhanced.png";
+        const m = /filename\*?=(?:UTF-8'')?["']?([^";\n]+)/i.exec(cd);
+        if (m) name = decodeURIComponent(m[1].replace(/["']/g, ""));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+        setStatus("Download started.", "ok");
+      } catch (err) {
+        setStatus(String(err.message || err), "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,7 +1,13 @@
+# Core image / ML (web app + notebooks + evaluate_model.py)
 opencv-python
+numpy
 matplotlib
 scikit-image
 datasets
 notebook
 torch
 torchvision
+# Web UI (app.py)
+flask
+# Batch evaluation CSV (evaluate_model.py / run_pipeline.py)
+pandas

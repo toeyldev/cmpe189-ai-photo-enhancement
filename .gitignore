@@ -50,6 +50,11 @@ outputs/
 *.log
 
 # =========================
+# SwinIR (cloned at runtime by src/swinir_pytorch.py; do not commit)
+# =========================
+SwinIR/
+
+# =========================
 # Misc
 # =========================
 *.tmp
