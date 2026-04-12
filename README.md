@@ -8,7 +8,7 @@ Thao Huynh · Toey Lui · Zahid Khan · Cody Ambrosio · Ryan Darghous
 
 ## Overview
 
-This project builds an end-to-end pipeline for AI-powered image enhancement using deep learning. We degrade high-quality images with Gaussian noise and downsampling, then restore them using pretrained deep learning models (DnCNN and SwinIR). Performance is evaluated using PSNR and SSIM metrics, and results are compared across both models.
+This project builds an end-to-end pipeline for AI-powered image enhancement using deep learning. We degrade high-quality images with Gaussian noise and downsampling, then restore them using pretrained deep learning models (DnCNN and SwinIR). Performance is evaluated using PSNR and SSIM metrics, and results are compared across both models. A small **Flask web app** (`app.py`) lets you upload an image, pick a model, and download a denoised result from the browser.
 
 ---
 
@@ -29,6 +29,9 @@ This project builds an end-to-end pipeline for AI-powered image enhancement usin
 
 ```
 cmpe189-ai-photo-enhancement/
+├── app.py                   # Flask web app — upload image, choose DnCNN or SwinIR, download result
+├── templates/
+│   └── index.html           # web UI for app.py
 ├── run_pipeline.py          # main script — runs full DnCNN pipeline end-to-end
 ├── requirements.txt         # Python dependencies
 ├── src/
@@ -68,6 +71,33 @@ python run_pipeline.py
 # run with fewer images for quick testing
 python run_pipeline.py --limit 5
 ```
+
+### Run the web app (Flask)
+
+From the **repository root** (same folder as `app.py`), after installing dependencies:
+
+```bash
+pip install -r requirements.txt
+python app.py
+```
+
+Then open a browser to **http://127.0.0.1:5000** (or **http://localhost:5000**). Upload a noisy RGB image, select **DnCNN** or **SwinIR**, click **Enhance & download**, and save the returned PNG.
+
+**Optional:** change host or port with environment variables before starting the server (defaults: `HOST=127.0.0.1`, `PORT=5000`):
+
+```bash
+# Linux / macOS
+HOST=0.0.0.0 PORT=8080 python app.py
+
+# Windows PowerShell
+$env:HOST="0.0.0.0"; $env:PORT="8080"; python app.py
+```
+
+**Notes:**
+
+- **DnCNN** uses `src/dncnn_pytorch.py` and `src/dncnn_weights.py`. Weights download automatically to `model/weights/` if missing.
+- **SwinIR** uses `src/swinir_pytorch.py`. The first run needs **Git** on your PATH; the code clones the upstream SwinIR repo into a local `SwinIR/` folder (gitignored) and may download weights — allow time on first use.
+- Stop the server with **Ctrl+C** in the terminal.
 
 ### Run in Google Colab
 
