@@ -41,6 +41,7 @@ cmpe189-ai-photo-enhancement/
 ├── notebooks/
 │   ├── DnCNN_Inference_Color.ipynb      # color DnCNN inference notebook
 │   └── DnCNN_Inference_Grayscale.ipynb  # grayscale DnCNN inference notebook
+│   └── │   └── DnCNN_Inference_NoiseLevelComparison.ipynb  # noise level comparison notebook
 ├── model/
 │   └── weights/
 │       ├── dncnn_color_blind.pth        # pretrained DnCNN weights (RGB)
