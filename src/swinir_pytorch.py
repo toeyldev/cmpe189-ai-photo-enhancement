@@ -23,15 +23,16 @@ Usage:
     denoised = swinir_inference(model, device, degraded_rgb)
 """
 
-from __future__ import annotations
-import sys
-import os
-import urllib.request
-from pathlib import Path
+from __future__ import annotations #Import annotations library to work with type hints
+import shutil #Import shutil library to remove directories and files
+import subprocess #Import subprocess library to run commands in the terminal
+import sys #Import sys library to work with the system
+import urllib.request #Import urllib.request library to download files from the internet
+from pathlib import Path #Import pathlib library to work with file paths
 
-import numpy as np
-import torch
-import torch.nn.functional as F
+import numpy as np #Import numpy library to work with arrays
+import torch #Import torch library to work with tensors
+import torch.nn.functional as F #Import torch.nn.functional library to work with neural networks
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -47,6 +48,44 @@ SWINIR_REPO_PATH     = Path(__file__).resolve().parent.parent / "SwinIR"
 WINDOW_SIZE  = 8    # SwinIR transformer window size — image dims must be divisible by this
 TILE_SIZE    = 256  # process image in 256x256 tiles to avoid GPU out of memory
 TILE_OVERLAP = 32   # overlap between tiles to avoid visible seam artifacts
+
+
+def _swinir_repo_has_architecture() -> bool:
+    """True if cloned upstream repo contains the SwinIR network module we import."""
+    # load_swinir_model does "from models.network_swinir import SwinIR" — this file must exist or import fails.
+    return (SWINIR_REPO_PATH / "models" / "network_swinir.py").is_file()
+
+
+def _clone_swinir_repo() -> None:
+    """
+    Clone JingyunLiang/SwinIR into SWINIR_REPO_PATH.
+
+    Must use subprocess with a argv list (not os.system + unquoted paths): project
+    paths often contain spaces (e.g. 'Code Projects'), which breaks shell parsing
+    and yields an incomplete clone — then 'import models' fails.
+    """
+    SWINIR_REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # argv list (no shell): each argument is one token — paths like "...\Code Projects\..." stay a single path.
+    proc = subprocess.run(
+        [
+            "git",
+            "clone",
+            "--depth",
+            "1",  # shallow clone — enough for models/ code, faster first run
+            SWINIR_REPO_URL,
+            str(SWINIR_REPO_PATH),  # destination; quoted implicitly because it is one list element, not split on spaces
+        ],
+        capture_output=True,  # capture git errors for the RuntimeError below
+        text=True,
+        cwd=str(SWINIR_REPO_PATH.parent),  # run git from project parent so clone target resolves cleanly
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Could not clone SwinIR (git failed). Install Git and ensure "
+            "'git' is on your PATH, then try again.\n"
+            f"git stdout: {proc.stdout.strip()}\n"
+            f"git stderr: {proc.stderr.strip()}"
+        )
 
 
 # ── Setup: Clone SwinIR repo and download weights ─────────────────────────────
@@ -65,13 +104,24 @@ def setup_swinir(weights_path: Path | str | None = None) -> Path:
     Returns:
         Path to the weights file
     """
-    # Step 1: Clone SwinIR repo if not already present
+    # Step 1: Ensure a valid SwinIR checkout (models/network_swinir.py must exist).
+    # Old code used os.system("git clone ... " + path): spaces in path broke the shell → bad/missing clone → ModuleNotFoundError: models.
+    if SWINIR_REPO_PATH.exists() and not _swinir_repo_has_architecture():
+        print("SwinIR folder exists but is incomplete; removing and re-cloning...")
+        shutil.rmtree(SWINIR_REPO_PATH, ignore_errors=True)  # drop broken folder so _clone_swinir_repo() can run fresh
+
     if not SWINIR_REPO_PATH.exists():
-        print("Cloning SwinIR repo...")
-        os.system(f"git clone {SWINIR_REPO_URL} {SWINIR_REPO_PATH}")
+        print("Cloning SwinIR repo (first run; may take a minute)...")
+        _clone_swinir_repo()  # uses subprocess list form — fixes clone under paths with spaces
         print("SwinIR repo cloned.")
     else:
-        print("SwinIR repo already exists.")
+        print("SwinIR repo already present.")
+
+    if not _swinir_repo_has_architecture():
+        raise RuntimeError(
+            f"SwinIR checkout at {SWINIR_REPO_PATH} is missing models/network_swinir.py. "
+            "Delete the SwinIR folder and try again, or check that git clone completed."
+        )  # last line of defense if git failed silently or disk was interrupted mid-clone
 
     # Step 2: Add SwinIR to Python path so we can import from it
     swinir_str = str(SWINIR_REPO_PATH)
@@ -187,8 +237,12 @@ def tile_inference(model, img_tensor, device):
             # tile boundaries
             y_end = min(y + TILE_SIZE, h)
             x_end = min(x + TILE_SIZE, w)
-            y_start = y_end - TILE_SIZE if y_end - y < TILE_SIZE else y
-            x_start = x_end - TILE_SIZE if x_end - x < TILE_SIZE else x
+            # Align last partial tile to the bottom/right with a full TILE_SIZE crop when possible.
+            # Must clamp to 0: if h (or w) < TILE_SIZE, y_end - TILE_SIZE is negative; negative
+            # indices in PyTorch slice from the end, so writes miss the top/left → count stays 0
+            # there → inf/NaN after divide → black bands (common when short side < 256 px).
+            y_start = max(0, y_end - TILE_SIZE) if y_end - y < TILE_SIZE else y
+            x_start = max(0, x_end - TILE_SIZE) if x_end - x < TILE_SIZE else x
 
             # extract tile
             tile = img_tensor[:, :, y_start:y_end, x_start:x_end]
@@ -213,7 +267,9 @@ def tile_inference(model, img_tensor, device):
             count[:, :, y_start:y_end, x_start:x_end]  += 1
 
     # average overlapping regions for smooth transitions
-    output = output / count
+    safe_count = count.clamp(min=1)  # avoid div-by-zero if a pixel were never covered (should not happen after correct y_start/x_start)
+    output = output / safe_count
+    output = torch.nan_to_num(output, nan=0.0, posinf=1.0, neginf=0.0)
     return output
 
 

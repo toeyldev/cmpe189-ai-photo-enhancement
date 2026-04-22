@@ -38,6 +38,8 @@ data/
 # =========================
 # Model weights / large files
 # =========================
+# SwinIR denoising checkpoint exceeds GitHub's 100MB limit; download separately (see README).
+model/weights/swinir_color_dn50.pth
 # *.pth
 *.pt
 *.h5

@@ -7,6 +7,8 @@ datasets
 notebook
 torch
 torchvision
+# SwinIR upstream (SwinIR/models/network_swinir.py) imports timm.models.layers
+timm>=0.4.12,<1.0
 # Web UI (app.py)
 flask
 # Batch evaluation CSV (evaluate_model.py / run_pipeline.py)
