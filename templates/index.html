@@ -1,0 +1,474 @@
+<!DOCTYPE html> <!-- Tells browser this is a HTML5. Uses modern parsing rules-->
+<!--
+  CMPE189 web UI for the photo enhancement Flask app (app.py).
+
+  User flow:
+    1) Pick an image file and a model (DnCNN or SwinIR).
+    2) Submit intercepts the normal form navigation; we POST multipart data to /enhance.
+    3) On success the server returns a PNG file; JavaScript triggers a browser download.
+    4) On error the server returns JSON { "error": "..." } and show that text under the button.
+
+  Styling is self-contained (no separate static/) so the template is one file for check-in simplicity.
+-->
+<html lang="en"> <!-- Tells browser the language of the page is English-->
+<head>
+  <meta charset="UTF-8" />  <!-- Tells browser to use the UTF-8 character encoding-->
+  <meta name="viewport" content="width=device-width, initial-scale=1" /> <!-- Tells browser to use the width of the device and scale the content to 100%-->
+  <title>AI Photo Enhancement — DnCNN &amp; SwinIR</title> <!-- Title shown in the browser tab -->
+  
+  <!-- Google fonts used for page design -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /> 
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  
+  <!-- Page look: dark theme, single column, readable on phones (viewport meta above). -->
+  <style>
+    :root {
+      --bg: #0f1419; /* dark background color */ 
+      --surface: #1a222d; /* dark surface color */
+      --border: #2d3a4a; /* dark border color */
+      --text: #e8eef4; /* light text color */
+      --muted: #8b9cb3; /* muted text color */
+      --accent: #3d9cf5; /* accent color */
+      --accent-dim: #2563a8; /* accent dim color */
+      --success: #34d399; /* success color */
+      --err: #f87171; /* error color */
+    }
+
+    * { box-sizing: border-box; } /* Makes width and height calculations easier */
+
+    /* Page background and default dext styling*/
+    body {
+      margin: 0; /* remove default margin */
+      min-height: 100vh; /* set minimum height to 100% of the viewport height */
+      font-family: "DM Sans", system-ui, sans-serif; /* set the font to DM Sans */
+      background: var(--bg); /* set background color to the dark background color */
+      color: var(--text); /* set text color to the light text color */
+      line-height: 1.5; /* set line height to 1.5 */
+    }
+
+    /* Top title area*/
+    .hero {
+      max-width: min(56rem, calc(100% - 2.5rem)); /* ~896px cap, with side margin on small viewports */
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 0;
+    }
+
+    /* Main content wrapper*/
+    .wrap {
+      max-width: 560px; /* set maximum width to 560 pixels */
+      margin: 0 auto; /* center the content horizontally */
+      padding: 0 1.25rem 4rem; /* top padding lives on .hero */
+    }
+
+    /* set the heading style */
+    h1 {
+      text-align: center; /* main title will be centered */
+      font-size: 2rem; /* slightly larger than before (was 1.65rem) */
+      font-weight: 700; /* set font weight to 700 */
+      letter-spacing: -0.02em; /* set letter spacing to -0.02em */
+      margin: 0 0 0.35rem; /* set margin to 0 on the top and bottom, and 0.35rem on the left and right */
+    }
+
+    /* set the subtitle style */
+    .sub { 
+      text-align: center; /* match centered title above */
+      color: var(--muted);
+      font-size: 0.95rem; /* set font size to 0.95rem */
+      margin: 0 0 2rem; /* space before card */
+    }
+
+    /* One line only when the viewport is wide enough (avoids horizontal scroll on phones). */
+    @media (min-width: 960px) {
+      .sub {
+        white-space: nowrap;
+      }
+    }
+
+     /* set the card style */
+    .card {
+      background: var(--surface); /* set background color to the dark surface color */
+      border: 1px solid var(--border); /* set border to 1px solid the dark border color */
+      border-radius: 12px; /* set border radius to 12px */
+      padding: 1.5rem; /* set padding to 1.5rem */
+    }
+
+    /* set the label style */
+    label { 
+      display: block; /* set display to block */
+      font-size: 0.8rem; /* set font size to 0.8rem */
+      font-weight: 600; /* set font weight to 600 */
+      text-transform: uppercase; /* set text transform to uppercase */
+      letter-spacing: 0.06em; /* set letter spacing to 0.06em */
+      color: var(--muted); /* set color to the muted text color */
+      margin-bottom: 0.5rem; /* set margin bottom to 0.5rem */
+    }
+
+    /* set the file input style */
+    input[type="file"] { 
+      width: 100%; /* set width to 100% */
+      padding: 0.75rem; /* set padding to 0.75rem */
+      background: var(--bg); /* set background color to the dark background color */
+      border: 1px dashed var(--border); /* set border to 1px dashed the dark border color */
+      border-radius: 8px; /* set border radius to 8px */
+      color: var(--text); /* set color to the light text color */
+      font-size: 0.9rem; /* set font size to 0.9rem */
+      cursor: pointer; /* set cursor to pointer */
+    }
+
+    /* set the file selector button style */
+    input[type="file"]::file-selector-button { 
+      margin-right: 0.75rem; /* set margin right to 0.75rem */
+      padding: 0.4rem 0.75rem; /* set padding to 0.4rem and 0.75rem */
+      border: none; /* set border to none */
+      border-radius: 6px; /* set border radius to 6px */
+      background: var(--accent-dim); /* set background color to the accent dim color */
+      color: var(--text); /* set color to the light text color */
+      font-family: inherit; /* set font family to inherit */
+      font-weight: 600; /* set font weight to 600 */
+      cursor: pointer; /* set cursor to pointer */
+    }
+
+    .field { margin-bottom: 1.25rem; } /* set margin bottom to 1.25rem */
+    /* File row + thumbnail preview (updated in JS when user picks or drops a file). */
+    .file-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .file-field.file-field--dropping { /* Blue highlight that is shown when dragging file over area */
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+      border-radius: 10px;
+    }
+
+    /* Photo preview section. */
+    .preview-wrap {
+      text-align: center; /* Set the text label to the center */
+    }
+
+    .preview-label {
+      margin: 0 0 0.4rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    /* Small selected image preview */
+    #preview, #resultPreview {
+      display: block; /* make image behave like a block element */
+      margin: 0 auto; /* set to no margin and automatically center left/right*/
+      max-width: 100%; /* set image width to 100% */
+      max-height: 200px; /* set height to 200px */
+      width: auto; /* calculate width automatically */
+      height: auto; /* calculate height automatically */
+      object-fit: contain; /* Ensure image fits inside the box */ 
+      border-radius: 8px; /* Rounds the corners of image slightly */
+      border: 1px solid var(--border); /* Add 1 pixel border around image */ 
+      background: var(--bg); /* set backgroudn color behind image */
+    }
+
+    /* Set the drop down style */ 
+    select {
+      width: 100%; /* set width to 100% */
+      padding: 0.65rem 0.75rem; /* set padding to 0.65rem and 0.75rem */
+      background: var(--bg); /* set background color to the dark background color */
+      border: 1px solid var(--border); /* set border to 1px solid the dark border color */
+      border-radius: 8px; /* set border radius to 8px */
+      color: var(--text); /* set color to the light text color */
+      font-family: inherit; /* set font family to inherit */
+      font-size: 1rem; /* set font size to 1rem */
+    }
+
+    /* set the submit button style */
+    button[type="submit"] { 
+      width: 100%; /* set width to 100% */
+      margin-top: 0.25rem; /* set margin top to 0.25rem */
+      padding: 0.85rem 1rem; /* set padding to 0.85rem and 1rem */
+      border: none; /* set border to none */
+      border-radius: 8px; /* set border radius to 8px */
+      background: linear-gradient(165deg, var(--accent), var(--accent-dim)); /* set background to a linear gradient from the accent color to the accent dim color */
+      color: #fff; /* set color to white */
+      font-family: inherit; /* set font family to inherit */
+      font-size: 1rem; /* set font size to 1rem */
+      font-weight: 700; /* set font weight to 700 */
+      cursor: pointer; /* set cursor to pointer */
+    }
+
+    /* set the disabled button style */
+    button[type="submit"]:disabled {  
+      opacity: 0.5; /* set opacity to 0.5 */
+      cursor: not-allowed; /* set cursor to not allowed */
+      cursor: not-allowed;
+    }
+
+    /* set the hint style */
+    .hint { 
+      font-size: 0.85rem; /* set font size to 0.85rem */
+      color: var(--muted); /* set color to the muted text color */
+      margin-top: 1rem; /* set margin top to 1rem */
+    }
+
+
+    .hint code {
+      font-family: "JetBrains Mono", monospace; /* set font to JetBrains Mono */
+      font-size: 0.8rem; /* set font size to 0.8rem */
+      background: var(--bg); /* set background color to the dark background color */
+      padding: 0.15rem 0.4rem; /* set padding to 0.15rem and 0.4rem */
+      border-radius: 4px; /* set border radius to 4px */
+    }
+
+    /* set the status style */
+    #status {
+      margin-top: 1rem; /* set margin top to 1rem */
+      font-size: 0.9rem; /* set font size to 0.9rem */
+      min-height: 1.4em; /* set minimum height to 1.4em */
+    }
+
+    #status.error { color: var(--err); } /* set color to the error color */
+    #status.ok { color: var(--success); } /* set color to the success color */
+    footer {
+      margin-top: 2rem; /* set margin top to 2rem */
+      font-size: 1.0rem; /* set font size to 0.8rem */
+      color: var(--muted); /* set color to the muted text color */
+      text-align: center; /* set text align to center */
+    }
+
+
+  </style>
+</head>
+<body>
+  <!-- Top page heading -->
+  <header class="hero">
+    <h1>AI Photo Enhancement</h1> 
+    <p class="sub">Upload a noisy RGB image, choose a model, then download the denoised result!</p> 
+  </header>
+
+  <div class="wrap">
+    <div class="card"> 
+      <!-- novalidate: validate in JS and show messages in #status (consistent UX). -->
+      <form id="form" novalidate> 
+        <!-- Field name "image" must match request.files["image"] in app.py. -->
+        <div class="field">
+          <label for="image">Acceptable Image Formats: PNG, JPEG, WebP, BMP, TIFF</label> 
+
+          <div class="file-field" id="fileField">
+            <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/bmp,.tif,.tiff" required /> <!-- Types of files that can be accepted -->
+            
+            <!-- Text will remain hidden until user picks an image -->
+            <div class="preview-wrap" id="previewWrap" hidden>
+              <p class="preview-label">Selected image preview</p> <!-- Preview label that says "Selected Image Preview" on the website-->
+              <img id="preview" alt="" />
+            </div>
+          </div>
+        </div> 
+
+        <!-- value is sent as form field "model" → request.form.get("model") in app.py. -->
+        <div class="field">
+          <label for="model">Model</label> 
+          <select id="model" name="model"> 
+            <option value="dncnn">DnCNN (fast, CNN)</option> 
+            <option value="swinir">SwinIR (heavier, transformer)</option> 
+          </select>
+        </div>
+
+        <!-- button that is shown once a user put a valid image -->
+        <button type="submit" id="btn">Enhance &amp; download</button> 
+      </form>
+
+      <!-- Area used to show errors or success messages -->
+      <p id="status" role="status"></p>
+
+      <!-- Area used to show a preview of enhanced image on theweb page -->
+      <div class="preview-wrap" id="resultWrap" hidden>
+        <p class= "preview-label">Enhanced image preview</p>
+        <img id="resultPreview" alt="" />
+      </div> 
+
+      <!-- Notes to be displayed for user on background info of models-->
+      <p class="hint"><strong>DnCNN</strong> is tuned for Gaussian-style camera noise; very heavy or “salt &amp; pepper” noise may still look similar after processing.</p>
+      <p class="hint"><strong>SwinIR</strong> needs <a href="https://git-scm.com/download/win" style="color:var(--accent);">Git</a> installed; the first run clones the SwinIR repo into your project folder and downloads weights. (Warning: This can take a few minutes or more depending on you computer specs).</p>
+    </div>
+
+    <footer>CMPE189 - Group 7 · Flask + PyTorch</footer> <!-- set the footer to CMPE189 Group 7 · Flask + PyTorch -->
+  </div>
+
+  <script>
+    //Elements that are needed for JavaScript 
+    const form = document.getElementById("form"); 
+    const btn = document.getElementById("btn"); 
+    const statusEl = document.getElementById("status"); 
+    const fileInput = document.getElementById("image");  
+    const fileField = document.getElementById("fileField");
+    const previewWrap = document.getElementById("previewWrap");
+    const previewImg = document.getElementById("preview");
+    const resultWrap = document.getElementById("resultWrap");
+    const resultPreview = document.getElementById("resultPreview");
+
+    let previewObjectUrl = null; //Temporary browser URL for local image preview
+    let resultObjectUrl = null; //Temporary browser URL for local enchanced image preview 
+
+    //Function that cleans previous preview URL so memory is not wasted 
+    function revokePreviewUrl() {
+      if (previewObjectUrl) {
+        URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = null;
+      }
+    }
+
+    //Function that cleans previous enhanced image preview URl so memory is not wasted 
+    function revokeResultUrl() {
+      if (resultObjectUrl) {
+        URL.revokeObjectURL(resultObjectUrl);
+        resultObjectUrl = null; 
+      }
+      resultPreview.removeAttribute("src");
+      resultPreview.removeAttribute("alt");
+      resultWrap.hidden = true;
+    }
+
+    //Function that shows preview of selected image 
+    function updateImagePreview(file) {
+      revokePreviewUrl();
+      if (!file || !file.type.startsWith("image/")) { //If there is no file or image is not valid, hide preview area 
+        previewImg.removeAttribute("src");
+        previewImg.removeAttribute("alt");
+        previewWrap.hidden = true;
+        return;
+      }
+      
+      //Create temporary local URL so browser can display image 
+      previewObjectUrl = URL.createObjectURL(file);
+      previewImg.src = previewObjectUrl;
+      previewImg.alt = "Preview of " + (file.name || "selected image");
+      previewWrap.hidden = false;
+    }
+
+    //Update preview when user picks file normally 
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files && fileInput.files[0];
+      revokeResultUrl(); //if an enhanced image preview is still shown, hide it once new file is made
+      updateImagePreview(f);
+    });
+
+    // Allow dropping onto the whole image field (not only the native input control).
+    ["dragenter", "dragover"].forEach((type) => {
+      fileField.addEventListener(type, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (type === "dragover") e.dataTransfer.dropEffect = "copy";
+        fileField.classList.add("file-field--dropping");
+      });
+    });
+
+    //Remove highlight when cursor with dragged file leaves the area 
+    fileField.addEventListener("dragleave", (e) => {
+      const rt = e.relatedTarget;
+      if (rt && fileField.contains(rt)) return;
+      fileField.classList.remove("file-field--dropping");
+    });
+
+    //Handler to drop file into upload area 
+    fileField.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileField.classList.remove("file-field--dropping");
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file) return;
+    
+      if (!file.type.startsWith("image/")) { //Reject non-image files 
+        setStatus("Drop an image file (PNG, JPEG, WebP, etc.).", "error");
+        return;
+      }
+      
+      //Put dropped file into real fine input 
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      fileInput.files = dt.files;
+      revokeResultUrl();
+      updateImagePreview(file); //Show image preview 
+      
+    });
+
+    /** Show a line of feedback under the button (plain, .error, or .ok for color). */
+    function setStatus(msg, cls) { // set the status to the status element
+      statusEl.textContent = msg || "";
+      statusEl.className = cls || "";
+    }
+
+    //Logic for submitting 
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault(); // keep user on this page; we talk to Flask via fetch()
+      const model = document.getElementById("model").value;
+
+      //Make sure file was selected 
+      if (!fileInput.files || !fileInput.files[0]) {
+        setStatus("Choose an image file.", "error");
+        return;
+      }
+      revokeResultUrl(); //hide enhanced image preview if it still exists 
+      setStatus("Running enhancement…", "");
+      btn.disabled = true;
+
+      // Build the form data exactly how Flask wants it 
+      const fd = new FormData();
+      fd.append("image", fileInput.files[0]);
+      fd.append("model", model);
+
+      try { 
+        //Send file and model choice to Flask backedn 
+        const res = await fetch("/enhance", { method: "POST", body: fd });
+        const ct = res.headers.get("content-type") || "";
+
+        // returns JSON { error: "..." } for most failures.
+        if (!res.ok) {
+          let msg = res.statusText;
+          if (ct.includes("application/json")) {
+            const j = await res.json();
+            if (j.error) msg = j.error;
+          }
+          setStatus(msg, "error");
+          return;
+        }
+
+        // If successful, backend returns image file 
+        const processingTime = res.headers.get("X-Processing-Time");
+        const blob = await res.blob();
+        const cd = res.headers.get("Content-Disposition") || ""; //Get filename from response headers 
+        let name = "enhanced.png";
+        const m = /filename\*?=(?:UTF-8'')?["']?([^";\n]+)/i.exec(cd);
+        if (m) name = decodeURIComponent(m[1].replace(/["']/g, ""));
+
+        const url = URL.createObjectURL(blob); //Make temporary download link and click it automatically 
+
+        //Show enhanced image on website 
+        revokeResultUrl(); 
+        resultObjectUrl = url; 
+        resultPreview.src = resultObjectUrl;
+        resultPreview.alt = "Enhanced Image Preview"; 
+        resultWrap.hidden = false; 
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+
+
+        //URL.revokeObjectURL(url);
+        setStatus("Enhancement complete in " + processingTime + " seconds. Image downlaod has begun.", "ok");
+      } catch (err) { //Catch any browswer/network errors 
+        setStatus(String(err.message || err), "error");
+      } finally { //Renable button whether there is a success or failure
+        btn.disabled = false;
+      }
+    });
+  window.addEventListener("beforeunload", () => {
+  revokePreviewUrl();
+  revokeResultUrl();
+});
+  </script>
+</body>
+</html>
