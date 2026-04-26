@@ -1,0 +1,232 @@
+# AI-Powered Photo Enhancement
+
+**CMPE 189-03 | Group #7**
+
+Thao Huynh · Toey Lui · Zahid Khan · Cody Ambrosio · Ryan Darghous
+
+---
+
+## Overview
+
+This project builds an end-to-end pipeline for AI-powered image enhancement using deep learning. We degrade high-quality images with Gaussian noise and downsampling, then restore them using pretrained deep learning models (DnCNN and SwinIR). Performance is evaluated using PSNR and SSIM metrics, and results are compared across both models. A small **Flask web app** (`app.py`) lets you upload an image, pick a model, and download a denoised result from the browser.
+
+---
+
+## Results
+
+### DnCNN vs SwinIR — Average Results (50 images, Flickr2K)
+
+| Metric | Degraded (Baseline) | DnCNN | SwinIR | Winner |
+|--------|---------------------|-------|--------|--------|
+| PSNR   | 14.49 dB            | 24.08 dB | 24.27 dB | SwinIR (+0.19 dB) |
+| SSIM   | 0.0833              | 0.6499   | 0.6645   | SwinIR (+0.0146)  |
+
+*SwinIR outperforms DnCNN on all 50 images.*
+
+---
+
+## Project Structure
+
+```
+cmpe189-ai-photo-enhancement/
+├── app.py                   # Flask web app — upload image, choose DnCNN or SwinIR, download result
+├── templates/
+│   └── index.html           # web UI for app.py
+├── run_pipeline.py          # main script — runs full DnCNN pipeline end-to-end
+├── requirements.txt         # Python dependencies
+├── src/
+│   ├── download_data.py     # downloads Flickr2K images via HuggingFace
+│   ├── degrade_images.py    # applies degradation (downsample + noise)
+│   ├── evaluate_model.py    # runs DnCNN inference + computes PSNR/SSIM
+│   ├── dncnn_pytorch.py     # DnCNN model architecture (PyTorch)
+│   ├── dncnn_weights.py     # pretrained DnCNN weight downloader
+│   └── swinir_pytorch.py    # SwinIR model setup + tile-based inference (Check-in 4)
+├── notebooks/
+│   ├── DnCNN_Inference_Color.ipynb      # color DnCNN inference notebook
+│   └── DnCNN_Inference_Grayscale.ipynb  # grayscale DnCNN inference notebook
+├── model/
+│   └── weights/
+│       ├── dncnn_color_blind.pth        # pretrained DnCNN weights (RGB)
+│       └── dncnn_25.pth                 # pretrained DnCNN weights (grayscale)
+└── photo_enhancement_pipeline_final.ipynb  # main Colab notebook
+```
+
+---
+
+## Quick Start
+
+## GPU Setup (Windows + NVIDIA)
+
+This project uses **PyTorch**. Whether it runs on **GPU** depends on how PyTorch was installed.
+
+- **If you have an NVIDIA GPU**, install the **CUDA-enabled** PyTorch build inside a project virtual environment.
+- **RTX 50-series laptops (compute capability `sm_120`)** require **PyTorch nightly + CUDA 12.8** at the time of writing.
+- **Python 3.14** often does **not** have compatible CUDA PyTorch wheels yet. Use **Python 3.12** for GPU.
+
+### One-time setup (recommended)
+
+Run these commands from the repository root (folder that contains `app.py`):
+
+```powershell
+# Install Python 3.12 (one time on the machine)
+winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+
+# Create a local venv for this project
+py -3.12 -m venv .venv
+
+# Upgrade pip inside the venv
+.\.venv\Scripts\python -m pip install -U pip
+
+# Install PyTorch nightly w/ CUDA 12.8 (needed for RTX 50-series sm_120 GPUs)
+.\.venv\Scripts\python -m pip install --pre --index-url https://download.pytorch.org/whl/nightly/cu128 torch torchvision
+
+# Install the rest of the project dependencies
+.\.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+### Verify GPU is working
+
+```powershell
+.\.venv\Scripts\python -c "import torch; print('torch', torch.__version__); print('cuda', torch.cuda.is_available()); print('gpu', torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
+```
+
+You want to see `cuda True` and a torch version that includes `+cu...` (for example `+cu128`).
+
+### Run full pipeline (DnCNN)
+
+```bash
+# clone the repo
+git clone https://github.com/toeyldev/cmpe189-ai-photo-enhancement.git
+cd cmpe189-ai-photo-enhancement
+
+# install dependencies
+pip install -r requirements.txt
+
+# run full pipeline (downloads 50 images, degrades, denoise, evaluates)
+python run_pipeline.py
+
+# run with fewer images for quick testing
+python run_pipeline.py --limit 5
+```
+
+### Run the web app (Flask)
+
+From the **repository root** (same folder as `app.py`), after installing dependencies:
+
+```powershell
+# If you used the GPU setup above, ALWAYS run via the venv:
+.\.venv\Scripts\python app.py
+```
+
+Then open a browser to **http://127.0.0.1:5000** (or **http://localhost:5000**). Upload a noisy RGB image, select **DnCNN** or **SwinIR**, click **Enhance & download**, and save the returned PNG.
+
+### Web UI features
+
+The Flask web UI (`templates/index.html`) includes a few quality-of-life features:
+
+- **Drag & drop uploads**: drag a file onto the upload area (both the main image and ground truth).
+- **Selected image preview**: shows a local preview of the chosen input image (client-side Object URL).
+- **Enhanced image preview**: shows a preview of the returned enhanced result (client-side Object URL).
+- **Remove buttons**: clears the selected main image or ground truth file (does not delete from disk).
+- **Metrics panel**: populated from `/enhance` response headers (device, timings, optional VRAM/tile stats, optional PSNR/SSIM if ground truth is provided).
+  - The **Device** metric shows **GPU** when the backend reports `cuda`.
+  - Each metric label has an **“i”** tooltip explaining what it means.
+- **Optional sound effects**: small SFX for upload/complete/remove and a looping “loading” sound during enhancement.
+  - Toggle with the **Sound** button (pinned bottom-right).
+  - Sounds are served from `static/sounds/` (e.g. `loading.wav`, `finished.wav`, `remove.wav`, `click.wav`, `pop.mp3`).
+
+**Optional:** change host or port with environment variables before starting the server (defaults: `HOST=127.0.0.1`, `PORT=5000`):
+
+```bash
+# Linux / macOS
+HOST=0.0.0.0 PORT=8080 python app.py
+
+# Windows PowerShell
+$env:HOST="0.0.0.0"; $env:PORT="8080"; python app.py
+```
+
+**Notes:**
+
+- **DnCNN** uses `src/dncnn_pytorch.py` and `src/dncnn_weights.py`. Weights download automatically to `model/weights/` if missing.
+- **SwinIR** uses `src/swinir_pytorch.py`. The first run needs **Git** on your PATH; the code clones the upstream SwinIR repo into a local `SwinIR/` folder (gitignored) and may download weights — allow time on first use.
+- Stop the server with **Ctrl+C** in the terminal.
+
+### Run in Google Colab
+
+Open `photo_enhancement_pipeline_final.ipynb` in Google Colab. Make sure to enable **GPU** under `Runtime → Change runtime type → T4 GPU`.
+
+The notebook includes:
+- DnCNN denoising pipeline (Check-in 3)
+- SwinIR denoising pipeline with tile-based inference (Check-in 4)
+- DnCNN vs SwinIR comparison table and 4-panel visualization
+
+---
+
+## Pipeline
+
+```
+Flickr2K Dataset
+      ↓  download_data.py
+data/clean/*.png              (ground truth images)
+      ↓  degrade_images.py
+data/degraded/*.png           (noisy + blurry images)
+      ↓                    ↓
+DnCNN inference         SwinIR inference
+(evaluate_model.py)     (swinir_pytorch.py)
+      ↓                    ↓
+data/enhanced/*.png     data/swinir_enhanced/*.png
+      ↓                    ↓
+results_table.csv       swinir_results_table.csv
+      ↓
+comparison table + 4-panel figure
+```
+
+---
+
+## Models
+
+### DnCNN (Check-in 3)
+- **Weights:** `dncnn_color_blind.pth` from [cszn/KAIR](https://github.com/cszn/KAIR) releases v1.0
+- **Architecture:** 20 Conv2d layers, ReLU activations, 3 RGB channels, 64 features/layer
+- **Task:** blind color image denoising
+- **Average PSNR improvement:** +9.59 dB
+
+### SwinIR (Check-in 4)
+- **Weights:** `005_colorDN_DFWB_s128w8_SwinIR-M_noise50.pth` from [JingyunLiang/SwinIR](https://github.com/JingyunLiang/SwinIR)
+- **Architecture:** Swin Transformer, 6 stages, embed_dim=180, window_size=8
+- **Task:** color image denoising at noise level σ=50
+- **Average PSNR improvement:** +9.78 dB
+- **Note:** Uses tile-based inference (256×256 tiles) to handle large images without GPU out of memory
+
+---
+
+## Degradation Pipeline
+
+Each clean image is degraded in 3 steps:
+
+1. **Downsample** to 20% using `INTER_AREA` (loses detail)
+2. **Upsample** back to original size using `INTER_CUBIC` (introduces blur)
+3. **Add Gaussian noise** with σ = 50 (simulates sensor noise)
+
+---
+
+## Evaluation Metrics
+
+- **PSNR** (Peak Signal-to-Noise Ratio) — pixel-level accuracy, higher is better (dB)
+- **SSIM** (Structural Similarity Index) — perceptual similarity, range 0–1, higher is better
+
+---
+
+## References
+
+1. Zhang, K. et al. (2017). Beyond a Gaussian Denoiser: Residual Learning of Deep CNN for Image Denoising. *IEEE Transactions on Image Processing*.
+2. Wang, X. et al. (2019). ESRGAN: Enhanced Super-Resolution Generative Adversarial Networks. *ECCV 2018 Workshops*.
+3. Liang, J. et al. (2021). SwinIR: Image Restoration Using Swin Transformer. *ICCV 2021 Workshops*.
+
+---
+
+## Links
+
+- **GitHub:** https://github.com/toeyldev/cmpe189-ai-photo-enhancement
+- **Google Drive:** https://drive.google.com/drive/folders/1qHJwI9oF29m_OOoGmQRwfr1zE0cDUxLh?usp=drive_link
+- **Google Colab:** https://colab.research.google.com/drive/1U0zSlriKwTqMPQBZiTRrYfh_XsS_W-cC

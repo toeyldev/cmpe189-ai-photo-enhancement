@@ -1,0 +1,1085 @@
+<!DOCTYPE html> <!-- HTML5 document -->
+<!--
+  CMPE189 web UI for the photo enhancement Flask app (app.py).
+
+  User flow:
+    1) Pick an image file and a model (DnCNN or SwinIR).
+    2) Submit intercepts the normal form navigation; we POST multipart data to /enhance.
+    3) On success the server returns a PNG file; JavaScript triggers a browser download.
+    4) On error the server returns JSON { "error": "..." } and show that text under the button.
+
+  Design notes:
+    - This file intentionally contains HTML + CSS + JS in one place (no /static folder) to keep
+      student check-ins simple and portable.
+    - The UI supports both file-picker selection and drag & drop.
+    - The "Selected image" + "Enhanced image" previews are client-side only (Object URLs).
+    - The "Metrics" section is populated from HTTP response headers from /enhance.
+-->
+<html lang="en"> <!-- Page language (accessibility + spellcheck) -->
+<head>
+  <!-- Core metadata: charset + responsive sizing for phones -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Photo Enhancement — DnCNN &amp; SwinIR</title>
+  
+  <!-- Web fonts:
+       - DM Sans for UI
+       - JetBrains Mono for metric values / code-like fields -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /> 
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  
+  <!-- CSS is intentionally inline so the app runs with only Flask + templates. -->
+  <style>
+    /* ============================================================
+       Theme tokens.
+       Keep all colors here so the rest of the CSS reads like intent.
+       ============================================================ */
+    :root {
+      --bg: #0f1419; /* dark background color */ 
+      --surface: #1a222d; /* dark surface color */
+      --border: #2d3a4a; /* dark border color */
+      --text: #e8eef4; /* light text color */
+      --muted: #8b9cb3; /* muted text color */
+      --accent: #3d9cf5; /* accent color */
+      --accent-dim: #2563a8; /* accent dim color */
+      --success: #34d399; /* success color */
+      --err: #f87171; /* error color */
+    }
+
+    * { box-sizing: border-box; } /* Makes width and height calculations easier */
+
+    /* ============================================================
+       Layout primitives
+       ============================================================ */
+    body {
+      margin: 0;
+      min-height: 100vh; /* set minimum height to 100% of the viewport height */
+      font-family: "DM Sans", system-ui, sans-serif; /* set the font to DM Sans */
+      background: var(--bg); /* set background color to the dark background color */
+      color: var(--text); /* set text color to the light text color */
+      line-height: 1.5; /* set line height to 1.5 */
+    }
+
+    /* Top title area*/
+    .hero {
+      max-width: min(56rem, calc(100% - 2.5rem)); /* ~896px cap, with side margin on small viewports */
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 0;
+    }
+
+    /* Main content wrapper*/
+    .wrap {
+      max-width: 560px; /* set maximum width to 560 pixels */
+      margin: 0 auto; /* center the content horizontally */
+      padding: 0 1.25rem 4rem; /* top padding lives on .hero */
+    }
+
+    /* set the heading style */
+    h1 {
+      text-align: center; /* main title will be centered */
+      font-size: 2rem; /* slightly larger than before (was 1.65rem) */
+      font-weight: 700; /* set font weight to 700 */
+      letter-spacing: -0.02em; /* set letter spacing to -0.02em */
+      margin: 0 0 0.35rem; /* set margin to 0 on the top and bottom, and 0.35rem on the left and right */
+    }
+
+    /* set the subtitle style */
+    .sub { 
+      text-align: center; /* match centered title above */
+      color: var(--muted);
+      font-size: 0.95rem; /* set font size to 0.95rem */
+      margin: 0 0 2rem; /* space before card */
+    }
+
+    /* One line only when the viewport is wide enough (avoids horizontal scroll on phones). */
+    @media (min-width: 960px) {
+      .sub {
+        white-space: nowrap;
+      }
+    }
+
+     /* set the card style */
+    .card {
+      background: var(--surface); /* set background color to the dark surface color */
+      border: 1px solid var(--border); /* set border to 1px solid the dark border color */
+      border-radius: 12px; /* set border radius to 12px */
+      padding: 1.5rem; /* set padding to 1.5rem */
+    }
+
+    /* set the label style */
+    label { 
+      display: block; /* set display to block */
+      font-size: 0.8rem; /* set font size to 0.8rem */
+      font-weight: 600; /* set font weight to 600 */
+      text-transform: uppercase; /* set text transform to uppercase */
+      letter-spacing: 0.06em; /* set letter spacing to 0.06em */
+      color: var(--muted); /* set color to the muted text color */
+      margin-bottom: 0.5rem; /* set margin bottom to 0.5rem */
+    }
+
+    /* set the file input style */
+    input[type="file"] { 
+      width: 100%; /* set width to 100% */
+      padding: 0.75rem; /* set padding to 0.75rem */
+      background: var(--bg); /* set background color to the dark background color */
+      border: 1px dashed var(--border); /* set border to 1px dashed the dark border color */
+      border-radius: 8px; /* set border radius to 8px */
+      color: var(--text); /* set color to the light text color */
+      font-size: 0.9rem; /* set font size to 0.9rem */
+      cursor: pointer; /* set cursor to pointer */
+    }
+
+    /* set the file selector button style */
+    input[type="file"]::file-selector-button { 
+      margin-right: 0.75rem; /* set margin right to 0.75rem */
+      padding: 0.4rem 0.75rem; /* set padding to 0.4rem and 0.75rem */
+      border: none; /* set border to none */
+      border-radius: 6px; /* set border radius to 6px */
+      background: var(--accent-dim); /* set background color to the accent dim color */
+      color: var(--text); /* set color to the light text color */
+      font-family: inherit; /* set font family to inherit */
+      font-weight: 600; /* set font weight to 600 */
+      cursor: pointer; /* set cursor to pointer */
+    }
+
+    .field { margin-bottom: 1.25rem; } /* set margin bottom to 1.25rem */
+    /* ============================================================
+       Upload controls
+       - .file-field: drop-target area (used for drag & drop highlight)
+       - .file-actions: file input + "Remove" button row
+       ============================================================ */
+    .file-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .file-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .file-actions input[type="file"] {
+      flex: 1 1 auto;
+      width: auto;
+    }
+
+    /* Secondary button (used for "Remove" on file inputs). */
+    .btn-secondary {
+      padding: 0.55rem 0.8rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-family: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn-secondary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Floating sound toggle pinned to bottom-right corner (mute button). */
+    #muteBtn {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 10000; /* keep above main content */
+      padding: 0.6rem 0.85rem;
+      background: rgba(15, 20, 25, 0.75);
+      backdrop-filter: blur(6px);
+      border-color: rgba(45, 58, 74, 0.85);
+    }
+
+    /* Slightly smaller on phones so it doesn't cover content. */
+    @media (max-width: 520px) {
+      #muteBtn {
+        right: 12px;
+        bottom: 12px;
+        padding: 0.5rem 0.7rem;
+        font-size: 0.9rem;
+      }
+    }
+
+    .file-field.file-field--dropping { /* Blue highlight that is shown when dragging file over area */
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+      border-radius: 10px;
+    }
+
+    /* Photo preview section. */
+    .preview-wrap {
+      text-align: center; /* Set the text label to the center */
+    }
+
+    /* Side-by-side previews on larger screens; stacked on phones. */
+    .preview-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    @media (min-width: 860px) {
+      .wrap { max-width: 980px; }
+      .preview-grid { grid-template-columns: 1fr 1fr; }
+      #preview, #resultPreview { max-height: 260px; }
+    }
+
+    .preview-label {
+      margin: 0 0 0.4rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    /* Small selected image preview */
+    #preview, #resultPreview {
+      display: block; /* make image behave like a block element */
+      margin: 0 auto; /* set to no margin and automatically center left/right*/
+      max-width: 100%; /* set image width to 100% */
+      max-height: 200px; /* set height to 200px */
+      width: auto; /* calculate width automatically */
+      height: auto; /* calculate height automatically */
+      object-fit: contain; /* Ensure image fits inside the box */ 
+      border-radius: 8px; /* Rounds the corners of image slightly */
+      border: 1px solid var(--border); /* Add 1 pixel border around image */ 
+      background: var(--bg); /* set backgroudn color behind image */
+    }
+
+    /* Set the drop down style */ 
+    select {
+      width: 100%; /* set width to 100% */
+      padding: 0.65rem 0.75rem; /* set padding to 0.65rem and 0.75rem */
+      background: var(--bg); /* set background color to the dark background color */
+      border: 1px solid var(--border); /* set border to 1px solid the dark border color */
+      border-radius: 8px; /* set border radius to 8px */
+      color: var(--text); /* set color to the light text color */
+      font-family: inherit; /* set font family to inherit */
+      font-size: 1rem; /* set font size to 1rem */
+    }
+
+    /* set the submit button style */
+    button[type="submit"] { 
+      width: 100%; /* set width to 100% */
+      margin-top: 0.25rem; /* set margin top to 0.25rem */
+      padding: 0.85rem 1rem; /* set padding to 0.85rem and 1rem */
+      border: none; /* set border to none */
+      border-radius: 8px; /* set border radius to 8px */
+      background: linear-gradient(165deg, var(--accent), var(--accent-dim)); /* set background to a linear gradient from the accent color to the accent dim color */
+      color: #fff; /* set color to white */
+      font-family: inherit; /* set font family to inherit */
+      font-size: 1rem; /* set font size to 1rem */
+      font-weight: 700; /* set font weight to 700 */
+      cursor: pointer; /* set cursor to pointer */
+    }
+
+    /* set the disabled button style */
+    button[type="submit"]:disabled {  
+      opacity: 0.5; /* set opacity to 0.5 */
+      cursor: not-allowed; /* set cursor to not allowed */
+      cursor: not-allowed;
+    }
+
+    /* set the hint style */
+    .hint { 
+      font-size: 0.85rem; /* set font size to 0.85rem */
+      color: var(--muted); /* set color to the muted text color */
+      margin-top: 1rem; /* set margin top to 1rem */
+    }
+
+
+    .hint code {
+      font-family: "JetBrains Mono", monospace; /* set font to JetBrains Mono */
+      font-size: 0.8rem; /* set font size to 0.8rem */
+      background: var(--bg); /* set background color to the dark background color */
+      padding: 0.15rem 0.4rem; /* set padding to 0.15rem and 0.4rem */
+      border-radius: 4px; /* set border radius to 4px */
+    }
+
+    /* set the status style */
+    #status {
+      margin-top: 1rem; /* set margin top to 1rem */
+      font-size: 0.9rem; /* set font size to 0.9rem */
+      min-height: 1.4em; /* set minimum height to 1.4em */
+    }
+
+    #status.error { color: var(--err); } /* set color to the error color */
+    #status.ok { color: var(--success); } /* set color to the success color */
+
+    /* ============================================================
+       Metrics panel
+       This is populated from /enhance response headers (see JS below).
+       ============================================================ */
+    .metrics {
+      margin-top: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    .metrics h3 {
+      margin: 0;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.85rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .metrics table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    .metrics td {
+      padding: 0.55rem 0.85rem;
+      border-bottom: 1px solid rgba(45, 58, 74, 0.6);
+      vertical-align: top;
+    }
+
+    .metrics tr:last-child td { border-bottom: none; }
+    .metrics td:first-child { color: var(--muted); width: 46%; }
+    .metrics td:last-child { font-family: "JetBrains Mono", monospace; font-size: 0.85rem; }
+    /* Metric label column can include the "i" tooltip button. */
+    .metric-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .metric-info {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .metric-info-btn {
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      border: 1px solid rgba(61, 156, 245, 0.55);
+      background: rgba(61, 156, 245, 0.12);
+      color: var(--accent);
+      font-weight: 800;
+      font-size: 0.78rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      user-select: none;
+    }
+
+    .metric-info-btn:focus {
+      outline: 2px solid rgba(61, 156, 245, 0.65);
+      outline-offset: 2px;
+    }
+
+    /* Tooltip is fixed-position and attached to <body> so it won't be clipped
+       by the metrics container (which uses overflow: hidden for rounded corners). */
+    .metric-tooltip-fixed {
+      position: fixed;
+      min-width: 220px;
+      max-width: 320px;
+      padding: 0.65rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0b1117;
+      color: var(--text);
+      font-size: 0.85rem;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+      z-index: 9999;
+    }
+
+    .metric-tooltip-fixed[hidden] { display: none; }
+    .metric-tooltip-fixed strong { color: var(--text); }
+    .metric-tooltip-fixed code { font-family: "JetBrains Mono", monospace; font-size: 0.8rem; }
+
+    footer {
+      margin-top: 2rem; /* set margin top to 2rem */
+      font-size: 1.0rem; /* set font size to 0.8rem */
+      color: var(--muted); /* set color to the muted text color */
+      text-align: center; /* set text align to center */
+    }
+
+
+  </style>
+</head>
+<body>
+  <!-- ============================================================
+       Page header (title + one-line instructions)
+       ============================================================ -->
+  <header class="hero">
+    <h1>AI Photo Enhancement</h1> 
+    <p class="sub">Upload a noisy RGB image, choose a model, then download the denoised result!</p> 
+  </header>
+
+  <div class="wrap">
+    <div class="card"> 
+      <!-- Floating sound toggle (positioned bottom-right via CSS #muteBtn). -->
+      <button id="muteBtn" class="btn-secondary" type="button">🔊 Sound: ON</button>
+      <!-- The form is handled fully in JS (no page navigation).
+           novalidate keeps browser-native messages from fighting our custom status UI. -->
+          
+      <form id="form" novalidate> 
+        <!-- IMPORTANT: name="image" must match request.files["image"] in app.py. -->
+        <div class="field">
+          <label for="image">Acceptable Image Formats: PNG, JPEG, WebP, BMP, TIFF</label> 
+
+          <div class="file-field" id="fileField">
+            <div class="file-actions">
+              <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/bmp,.tif,.tiff" required /> <!-- Types of files that can be accepted -->
+              <button type="button" class="btn-secondary" id="clearImageBtn" disabled>Remove</button>
+            </div>
+          </div>
+        </div> 
+
+        <div class="field">
+          <!-- Ground truth is optional. If provided, backend computes PSNR/SSIM and returns
+               those values via response headers so we can display them in "Metrics". -->
+          <label for="ground_truth">Ground truth (optional, for PSNR/SSIM. Requires original quality of uploaded image)</label>
+          <div class="file-field" id="gtField">
+          <div class="file-actions">
+            <input type="file" id="ground_truth" name="ground_truth" accept="image/png,image/jpeg,image/webp,image/bmp,.tif,.tiff" />
+            <button type="button" class="btn-secondary" id="clearGtBtn" disabled>Remove</button>
+          </div>
+          </div>
+        </div>
+
+        <!-- value is sent as form field "model" → request.form.get("model") in app.py. -->
+        <div class="field">
+          <label for="model">Model</label> 
+          <select id="model" name="model"> 
+            <option value="dncnn">DnCNN (fast, CNN)</option> 
+            <option value="swinir">SwinIR (heavier, transformer)</option> 
+          </select>
+        </div>
+
+        <!-- button that is shown once a user put a valid image -->
+        <button type="submit" id="btn">Enhance &amp; download</button> 
+      </form>
+
+      <!-- Status line (errors/success/progress). Always updated via setStatus(). -->
+      <p id="status" role="status"></p>
+
+      <!-- Previews are client-side only (Object URLs). -->
+      <div class="preview-grid">
+        <!-- Text will remain hidden until user picks an image -->
+        <div class="preview-wrap" id="previewWrap" hidden>
+          <p class="preview-label">Selected image preview</p>
+          <img id="preview" alt="" />
+        </div>
+
+        <!-- Area used to show a preview of enhanced image on the web page -->
+        <div class="preview-wrap" id="resultWrap" hidden>
+          <p class="preview-label">Enhanced image preview</p>
+          <img id="resultPreview" alt="" />
+        </div>
+      </div>
+
+      <!-- Metrics are only shown after a successful /enhance response. -->
+      <div class="metrics" id="metricsWrap" hidden>
+        <h3>Metrics</h3>
+        <table>
+          <tbody id="metricsBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Notes to be displayed for user on background info of models-->
+      <p class="hint"><strong>DnCNN</strong> is tuned for Gaussian-style camera noise; very heavy or “salt &amp; pepper” noise may still look similar after processing.</p>
+      <p class="hint"><strong>SwinIR</strong> needs <a href="https://git-scm.com/download/win" style="color:var(--accent);">Git</a> installed; the first run clones the SwinIR repo into your project folder and downloads weights. (Warning: This can take a few minutes or more depending on you computer specs).</p>
+    </div>
+
+    <footer>CMPE189 - Group 7 · Flask + PyTorch</footer> <!-- set the footer to CMPE189 Group 7 · Flask + PyTorch -->
+  </div>
+
+  <script>
+    /* ============================================================
+       Client-side controller for the single-page UI.
+
+       High level:
+         - We keep the user on this page.
+         - We POST multipart/form-data to /enhance (Flask).
+         - On success: show enhanced preview + trigger a browser download.
+         - Metrics: backend includes timing/device data as response headers.
+
+       State rules:
+         - Picking/dropping a new input image invalidates old result + metrics.
+         - Tooltips are rendered in a fixed-position "portal" to avoid clipping.
+       ============================================================ */
+
+    // Cached DOM nodes used by handlers below.
+    const form = document.getElementById("form"); 
+    const btn = document.getElementById("btn"); 
+    const statusEl = document.getElementById("status"); 
+    const fileInput = document.getElementById("image");  
+    const fileField = document.getElementById("fileField");
+    const previewWrap = document.getElementById("previewWrap");
+    const previewImg = document.getElementById("preview");
+    const resultWrap = document.getElementById("resultWrap");
+    const resultPreview = document.getElementById("resultPreview");
+    const metricsWrap = document.getElementById("metricsWrap");
+    const metricsBody = document.getElementById("metricsBody");
+    const gtInput = document.getElementById("ground_truth");
+    const gtField = document.getElementById("gtField");
+    const clearImageBtn = document.getElementById("clearImageBtn");
+    const clearGtBtn = document.getElementById("clearGtBtn");
+    // Controls whether we play any optional SFX. Must be mutable (toggled by the button).
+    let isMuted = false;
+    const muteBtn = document.getElementById("muteBtn");
+
+    // Sound effects (purely optional/UX).
+    // NOTE: Browsers may block audio unless it follows a user gesture. We fail silently in that case.
+    // IMPORTANT: Use "/static/..." paths so Flask serves them correctly (relative paths can break on sub-routes).
+    const uploadSound = new Audio("/static/sounds/pop.mp3");
+    const completeSound = new Audio("/static/sounds/finished.wav");
+    const removeSound = new Audio("/static/sounds/remove.wav");
+    const loadSound = new Audio("/static/sounds/loading.wav");
+    const clickSound = new Audio("/static/sounds/click.wav");
+
+
+    //Sound configurations 
+    uploadSound.volume = 1.0; 
+    completeSound.volume = 1.0; 
+    removeSound.volume = 1.0; 
+    loadSound.loop = true; 
+    loadSound.volume = 0.5; 
+    clickSound.volume = 1.0; 
+
+
+
+    // Object URLs are used to preview local files/blobs without uploading them anywhere.
+    // Always revoke old URLs to avoid memory leaks during repeated use.
+    let previewObjectUrl = null;
+    let resultObjectUrl = null; 
+
+    // Metric tooltip contents (label -> HTML snippet).
+    // Keep this in one place so adding/removing metrics is straightforward.
+    const METRIC_INFO = {
+      "Device": "Where the model ran. <strong>GPU</strong> means CUDA on your NVIDIA card; <strong>CPU</strong> means it ran on your processor.",
+      "Image size": "Resolution of the input image in pixels (width × height).",
+      "Decode (s)": "Time to read + decode the uploaded image into memory (e.g., PIL/OpenCV load).",
+      "Model load (s)": "Time to initialize/load the model + weights. Often near 0 after the first run (cached in memory).",
+      "Inference (s)": "Time spent running the model forward pass (the actual enhancement).",
+      "Encode (s)": "Time to encode the output image (PNG) to send back to the browser.",
+      "Total (s)": "End-to-end time for the request (decode + load + inference + encode + small overhead).",
+      "VRAM peak (MB)": "Peak GPU memory used during processing (only meaningful on GPU).",
+      "Tiles processed": "If tiling is used, how many tiles the image was split into for inference.",
+      "Tile size": "Tile resolution used for inference when tiling is enabled.",
+      "Tile overlap": "Overlap between tiles to reduce seams at tile boundaries.",
+      "PSNR (input vs GT)": "PSNR comparing the <strong>input</strong> image to the ground truth (higher is better, dB).",
+      "SSIM (input vs GT)": "SSIM comparing the <strong>input</strong> image to the ground truth (closer to 1 is better).",
+      "PSNR (output vs GT)": "PSNR comparing the <strong>enhanced</strong> image to the ground truth (higher is better, dB).",
+      "SSIM (output vs GT)": "SSIM comparing the <strong>enhanced</strong> image to the ground truth (closer to 1 is better)."
+    };
+
+    function playSound(sound) {
+      if (!sound || isMuted) return;
+      try {
+        sound.currentTime = 0;
+        const p = sound.play();
+        if (p && typeof p.catch === "function") {
+          p.catch(() => {}); // blocked by autoplay policy or other non-fatal cases
+        }
+      } catch {
+        // ignore; sound effects should never break core UX
+      }
+    }
+
+    function startLoadingSound() {
+      if (!loadSound || isMuted) return;
+      loadSound.currentTime = 0;
+      const p = loadSound.play();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    }
+
+    function stopLoadingSound() {
+      if (!loadSound) return;
+      loadSound.pause();
+      loadSound.currentTime = 0;
+    }
+
+    // Release the selected-image preview URL (if any).
+    function revokePreviewUrl() {
+      if (previewObjectUrl) {
+        URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = null;
+      }
+    }
+
+    // Release the enhanced-image preview URL (if any) and hide the enhanced preview UI.
+    function revokeResultUrl() {
+      if (resultObjectUrl) {
+        URL.revokeObjectURL(resultObjectUrl);
+        resultObjectUrl = null; 
+      }
+      resultPreview.removeAttribute("src");
+      resultPreview.removeAttribute("alt");
+      resultWrap.hidden = true;
+    }
+
+    // Clear all metric rows and hide the whole panel.
+    function clearMetrics() {
+      metricsBody.innerHTML = "";
+      metricsWrap.hidden = true;
+    }
+
+    // Tooltip "portal": one shared tooltip node attached to <body>.
+    // This avoids clipping inside the metrics panel (which has overflow: hidden for rounded corners).
+    let metricTooltipEl = null;
+    let metricTooltipOwnerBtn = null;
+
+    function ensureMetricTooltipEl() {
+      if (metricTooltipEl) return metricTooltipEl;
+      metricTooltipEl = document.createElement("div");
+      metricTooltipEl.className = "metric-tooltip-fixed";
+      metricTooltipEl.hidden = true;
+      document.body.appendChild(metricTooltipEl);
+      return metricTooltipEl;
+    }
+
+    // Hide tooltip and clear expanded state from its owner button.
+    function hideMetricTooltip() {
+      const tip = ensureMetricTooltipEl();
+      tip.hidden = true;
+      tip.innerHTML = "";
+      if (metricTooltipOwnerBtn) {
+        metricTooltipOwnerBtn.setAttribute("aria-expanded", "false");
+      }
+      metricTooltipOwnerBtn = null;
+    }
+
+    // Show tooltip anchored to the clicked "i" button.
+    // The popover is positioned within the viewport and flips above if needed.
+    function showMetricTooltipForButton(btn) {
+      const tip = ensureMetricTooltipEl();
+      const html = btn.getAttribute("data-info-html") || "";
+      if (!html) return;
+
+      // Toggle if clicking the same button.
+      if (metricTooltipOwnerBtn === btn && !tip.hidden) {
+        hideMetricTooltip();
+        return;
+      }
+
+      if (metricTooltipOwnerBtn) metricTooltipOwnerBtn.setAttribute("aria-expanded", "false");
+      metricTooltipOwnerBtn = btn;
+      btn.setAttribute("aria-expanded", "true");
+
+      tip.innerHTML = html;
+      tip.hidden = false;
+
+      // Position near the button; flip above if near bottom of viewport.
+      const r = btn.getBoundingClientRect();
+      const margin = 10;
+
+      // First, place below-left.
+      tip.style.left = Math.min(window.innerWidth - margin, Math.max(margin, r.left)) + "px";
+      tip.style.top = (r.bottom + 8) + "px";
+
+      // Measure and adjust after content renders.
+      const tipRect = tip.getBoundingClientRect();
+      let left = parseFloat(tip.style.left);
+      let top = parseFloat(tip.style.top);
+
+      if (left + tipRect.width > window.innerWidth - margin) {
+        left = window.innerWidth - margin - tipRect.width;
+      }
+      if (left < margin) left = margin;
+
+      // Flip above if bottom would overflow.
+      if (top + tipRect.height > window.innerHeight - margin) {
+        top = r.top - 8 - tipRect.height;
+      }
+      if (top < margin) top = margin;
+
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+    }
+
+    // UX: close the tooltip on outside click and on Escape.
+    document.addEventListener("click", (e) => {
+      const tip = ensureMetricTooltipEl();
+      if (tip.hidden) return;
+      const t = e.target;
+      if (metricTooltipOwnerBtn && (metricTooltipOwnerBtn === t || metricTooltipOwnerBtn.contains(t))) return;
+      if (tip === t || tip.contains(t)) return;
+      hideMetricTooltip();
+    });
+
+    // Close on Escape.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") hideMetricTooltip();
+    });
+
+    // Add one row to the metrics table.
+    // If we have an explanation for the label, we also attach an "i" button.
+    function addMetricRow(label, value) {
+      if (value === null || value === undefined || value === "") return;
+      const tr = document.createElement("tr");
+      const td1 = document.createElement("td");
+      const td2 = document.createElement("td");
+      const labelWrap = document.createElement("span");
+      labelWrap.className = "metric-label";
+
+      const labelText = document.createElement("span");
+      labelText.textContent = label;
+      labelWrap.appendChild(labelText);
+
+      const infoHtml = METRIC_INFO[label];
+      if (infoHtml) {
+        const infoWrap = document.createElement("span");
+        infoWrap.className = "metric-info";
+
+        const infoBtn = document.createElement("button");
+        infoBtn.type = "button";
+        infoBtn.className = "metric-info-btn";
+        infoBtn.setAttribute("aria-label", "About " + label);
+        infoBtn.setAttribute("aria-expanded", "false");
+        infoBtn.setAttribute("data-info-html", infoHtml);
+        infoBtn.textContent = "i";
+
+        infoBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          playSound(clickSound);
+          showMetricTooltipForButton(infoBtn);
+        });
+
+        infoWrap.appendChild(infoBtn);
+        labelWrap.appendChild(infoWrap);
+      }
+
+      td1.appendChild(labelWrap);
+      td2.textContent = value;
+      tr.appendChild(td1);
+      tr.appendChild(td2);
+      metricsBody.appendChild(tr);
+    }
+
+    // Update the "Selected image preview" section based on the chosen file.
+    function updateImagePreview(file) {
+      revokePreviewUrl();
+      if (!file || !file.type.startsWith("image/")) { //If there is no file or image is not valid, hide preview area 
+        previewImg.removeAttribute("src");
+        previewImg.removeAttribute("alt");
+        previewWrap.hidden = true;
+        if (clearImageBtn) clearImageBtn.disabled = true;
+        return;
+      }
+      
+      //Create temporary local URL so browser can display image 
+      previewObjectUrl = URL.createObjectURL(file);
+      previewImg.src = previewObjectUrl;
+      previewImg.alt = "Preview of " + (file.name || "selected image");
+      previewWrap.hidden = false;
+      if (clearImageBtn) clearImageBtn.disabled = false;
+    }
+
+    // "Remove" for the main input image.
+    // Note: this does not delete any file from disk — it only clears the browser's selection.
+    function clearSelectedImage() {
+      fileInput.value = "";
+      revokePreviewUrl();
+      resetUiForNewInputImage();
+      updateImagePreview(null);
+      setStatus("", "");
+    }
+
+    if (clearImageBtn) {
+      clearImageBtn.addEventListener("click", () => {
+        playSound(removeSound);
+        clearSelectedImage();
+      });
+    }
+
+    if (muteBtn) {
+      muteBtn.addEventListener("click", () => {
+        // Optional little click feedback (only if we are currently unmuted).
+        playSound(clickSound);
+
+        isMuted = !isMuted;
+        muteBtn.textContent = isMuted ? "🔇 Sound: OFF" : "🔊 Sound: ON";
+
+        // If we're muting, stop any looping/ongoing sounds immediately.
+        if (isMuted) {
+          stopLoadingSound();
+        }
+      });
+    }
+
+    // Whenever the user provides a new *input* image (pick, drop, etc.), old result/metrics become stale.
+    // Keep this reset logic centralized so we don't forget a path (picker, drop, remove).
+    function resetUiForNewInputImage() {
+      revokeResultUrl();
+      clearMetrics();
+      setStatus("", "");
+      hideMetricTooltip(); // close any open metric info popover
+    }
+    
+
+    // Enable the ground truth "Remove" button only when a GT file is selected.
+    function updateGroundTruthButtonState() {
+      if (!clearGtBtn) return;
+      const hasGt = !!(gtInput && gtInput.files && gtInput.files[0]);
+      clearGtBtn.disabled = !hasGt;
+    }
+
+    // "Remove" for ground truth. Clears metrics because PSNR/SSIM depends on GT.
+    function clearGroundTruth() {
+      if (gtInput) gtInput.value = "";
+      clearMetrics(); // metrics depend on GT, so reset them if GT changes
+      updateGroundTruthButtonState();
+    }
+
+    if (clearGtBtn) {
+      clearGtBtn.addEventListener("click", clearGroundTruth);
+    }
+
+    // If GT changes, any shown PSNR/SSIM is no longer valid, so clear it.
+    if (gtInput) {
+      gtInput.addEventListener("change", () => {
+        clearMetrics(); // if user changes GT, old metrics are no longer valid
+        updateGroundTruthButtonState();
+      });
+    }
+
+    // Drag/drop support for ground truth (same highlight + drop behavior as main image).
+    if (gtField && gtInput) {
+      ["dragenter", "dragover"].forEach((type) => {
+        gtField.addEventListener(type, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (type === "dragover") e.dataTransfer.dropEffect = "copy";
+          gtField.classList.add("file-field--dropping");
+        });
+      });
+
+      gtField.addEventListener("dragleave", (e) => {
+        const rt = e.relatedTarget;
+        if (rt && gtField.contains(rt)) return;
+        gtField.classList.remove("file-field--dropping");
+      });
+
+      gtField.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        gtField.classList.remove("file-field--dropping");
+        const file = e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!file) return;
+
+        if (!file.type.startsWith("image/")) {
+          setStatus("Drop an image file for ground truth (PNG, JPEG, WebP, etc.).", "error");
+          return;
+        }
+
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        gtInput.files = dt.files;
+        clearMetrics();
+        updateGroundTruthButtonState();
+      });
+    }
+
+    // Main image: file picker -> update preview and reset stale UI.
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files && fileInput.files[0];
+      resetUiForNewInputImage();
+      updateImagePreview(f);
+
+      if (f && f.type.startsWith("image/")) {
+        playSound(uploadSound);
+      }
+    });
+
+    // Main image: drag & drop support.
+    // We attach events to the wrapper so the whole area acts like a drop target.
+    ["dragenter", "dragover"].forEach((type) => {
+      fileField.addEventListener(type, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (type === "dragover") e.dataTransfer.dropEffect = "copy";
+        fileField.classList.add("file-field--dropping");
+      });
+    });
+
+    //Remove highlight when cursor with dragged file leaves the area 
+    fileField.addEventListener("dragleave", (e) => {
+      const rt = e.relatedTarget;
+      if (rt && fileField.contains(rt)) return;
+      fileField.classList.remove("file-field--dropping");
+    });
+
+    // Main image: drop handler.
+    fileField.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileField.classList.remove("file-field--dropping");
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file) return;
+    
+      if (!file.type.startsWith("image/")) { //Reject non-image files 
+        setStatus("Drop an image file (PNG, JPEG, WebP, etc.).", "error");
+        return;
+      }
+      
+      // Put dropped file into the real file input so submit() uses the same path.
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      fileInput.files = dt.files;
+      resetUiForNewInputImage();
+      updateImagePreview(file); //Show image preview 
+      playSound(uploadSound); 
+      
+    });
+
+    // Single status line under the form (progress/errors/success).
+    function setStatus(msg, cls) { // set the status to the status element
+      statusEl.textContent = msg || "";
+      statusEl.className = cls || "";
+    }
+
+    // Submit workflow:
+    //   - Validate image exists
+    //   - POST multipart to /enhance
+    //   - If success: show enhanced preview, trigger download, populate metrics
+    //   - If error: show backend error message
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault(); // keep user on this page; we talk to Flask via fetch()
+      const model = document.getElementById("model").value;
+
+      //Make sure file was selected 
+      if (!fileInput.files || !fileInput.files[0]) {
+        setStatus("Choose an image file.", "error");
+        return;
+      }
+      revokeResultUrl(); //hide enhanced image preview if it still exists 
+      clearMetrics();
+      setStatus("Running enhancement…", "");
+      btn.disabled = true;
+      startLoadingSound();
+      // Build the form data exactly how Flask wants it 
+      const fd = new FormData();
+      fd.append("image", fileInput.files[0]);
+      fd.append("model", model);
+      if (gtInput && gtInput.files && gtInput.files[0]) {
+        fd.append("ground_truth", gtInput.files[0]);
+      }
+
+      try { 
+        //Send file and model choice to Flask backedn 
+        const res = await fetch("/enhance", { method: "POST", body: fd });
+        const ct = res.headers.get("content-type") || "";
+
+        // returns JSON { error: "..." } for most failures.
+        if (!res.ok) {
+          stopLoadingSound();
+          let msg = res.statusText;
+          if (ct.includes("application/json")) {
+            const j = await res.json();
+            if (j.error) msg = j.error;
+          }
+          setStatus(msg, "error");
+          return;
+        }
+
+        // If successful, backend returns image file 
+        const processingTime = res.headers.get("X-Processing-Time");
+        const device = res.headers.get("X-Device");
+        const imgSize = res.headers.get("X-Image-Size");
+
+        const tDecode = res.headers.get("X-Time-Decode");
+        const tLoad = res.headers.get("X-Time-Model-Load");
+        const tInfer = res.headers.get("X-Time-Infer");
+        const tEncode = res.headers.get("X-Time-Encode");
+        const tTotal = res.headers.get("X-Time-Total");
+
+        const vramPeak = res.headers.get("X-VRAM-Peak-MB");
+        const tilesProcessed = res.headers.get("X-Tiles-Processed");
+        const tileSize = res.headers.get("X-Tile-Size");
+        const tileOverlap = res.headers.get("X-Tile-Overlap");
+
+        const psnrIn = res.headers.get("X-PSNR-In");
+        const ssimIn = res.headers.get("X-SSIM-In");
+        const psnrOut = res.headers.get("X-PSNR-Out");
+        const ssimOut = res.headers.get("X-SSIM-Out");
+
+        const blob = await res.blob();
+        const cd = res.headers.get("Content-Disposition") || ""; //Get filename from response headers 
+        let name = "enhanced.png";
+        const m = /filename\*?=(?:UTF-8'')?["']?([^";\n]+)/i.exec(cd);
+        if (m) name = decodeURIComponent(m[1].replace(/["']/g, ""));
+
+        const url = URL.createObjectURL(blob); //Make temporary download link and click it automatically 
+
+        //Show enhanced image on website 
+        revokeResultUrl(); 
+        resultObjectUrl = url; 
+        resultPreview.src = resultObjectUrl;
+        resultPreview.alt = "Enhanced Image Preview"; 
+        resultWrap.hidden = false; 
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+
+
+        //URL.revokeObjectURL(url);
+        stopLoadingSound();
+        playSound(completeSound); 
+        setStatus("Enhancement complete in " + processingTime + " seconds. Image download has begun.", "ok");
+
+        const deviceLabel = (device || "").toLowerCase() === "cuda"
+          ? "GPU"
+          : ((device || "").toLowerCase() === "cpu" ? "CPU" : (device || "unknown"));
+        addMetricRow("Device", deviceLabel);
+        addMetricRow("Image size", imgSize || "unknown");
+        addMetricRow("Decode (s)", tDecode);
+        addMetricRow("Model load (s)", tLoad);
+        addMetricRow("Inference (s)", tInfer);
+        addMetricRow("Encode (s)", tEncode);
+        addMetricRow("Total (s)", tTotal);
+        addMetricRow("VRAM peak (MB)", vramPeak);
+
+        if (tilesProcessed) {
+          addMetricRow("Tiles processed", tilesProcessed);
+          addMetricRow("Tile size", tileSize);
+          addMetricRow("Tile overlap", tileOverlap);
+        }
+
+        if (psnrOut) {
+          addMetricRow("PSNR (input vs GT)", psnrIn);
+          addMetricRow("SSIM (input vs GT)", ssimIn);
+          addMetricRow("PSNR (output vs GT)", psnrOut);
+          addMetricRow("SSIM (output vs GT)", ssimOut);
+        }
+
+        metricsWrap.hidden = false;
+      } catch (err) { //Catch any browswer/network errors 
+        stopLoadingSound();
+        setStatus(String(err.message || err), "error");
+      } finally { //Renable button whether there is a success or failure
+        stopLoadingSound();
+        btn.disabled = false;
+      }
+    });
+  window.addEventListener("beforeunload", () => {
+  revokePreviewUrl();
+  revokeResultUrl();
+});
+  </script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# =========================
+# Virtual environments
+# =========================
+venv/
+.venv/
+.env/
+.envrc/
+
+# =========================
+# Jupyter / Colab
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# IDEs
+# =========================
+.idea/
+.vscode/
+
+# =========================
+# Data folders (VERY IMPORTANT)
+# =========================
+data/
+
+# =========================
+# Model weights / large files
+# =========================
+# SwinIR denoising checkpoint exceeds GitHub's 100MB limit; download separately (see README).
+model/weights/swinir_color_dn50.pth
+# *.pth
+*.pt
+*.h5
+
+# =========================
+# Logs / outputs
+# =========================
+logs/
+outputs/
+*.log
+
+# =========================
+# SwinIR (cloned at runtime by src/swinir_pytorch.py; do not commit)
+# =========================
+SwinIR/
+
+# =========================
+# Misc
+# =========================
+*.tmp
+*.bak
