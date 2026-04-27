@@ -122,6 +122,8 @@ Then open a browser to **http://127.0.0.1:5000** (or **http://localhost:5000**).
 
 ### Web UI features
 
+![image_alt](https://github.com/toeyldev/cmpe189-ai-photo-enhancement/blob/deaf373edd57e6f27e38d8acff1004cc0cd5389d/Screenshot%202026-04-26%20165708.png)
+
 The Flask web UI (`templates/index.html`) includes a few quality-of-life features:
 
 - **Drag & drop uploads**: drag a file onto the upload area (both the main image and ground truth).
