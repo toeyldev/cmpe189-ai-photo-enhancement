@@ -133,7 +133,7 @@ The Flask web UI (`templates/index.html`) includes a few quality-of-life feature
   - Each metric label has an **“i”** tooltip explaining what it means.
 - **Optional sound effects**: small SFX for upload/complete/remove and a looping “loading” sound during enhancement.
   - Toggle with the **Sound** button (pinned bottom-right).
-  - Sounds are served from `static/sounds/` (e.g. `loading.wav`, `finished.wav`, `remove.wav`, `click.wav`, `pop.mp3`).
+  - Sounds are served from `static/sounds/` (e.g. `loading.wav`, `finished.wav`, `remove.wav`, `click.wav`, `select.wav`).
 
 **Optional:** change host or port with environment variables before starting the server (defaults: `HOST=127.0.0.1`, `PORT=5000`):
 

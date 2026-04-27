@@ -1,4 +1,4 @@
-"""
+r"""
 Flask web app for CMPE189 photo enhancement (Check-in 4).
 
 What this file does (high level):
@@ -14,7 +14,7 @@ Why DnCNN and SwinIR live in src/:
 
 Run from the project root (folder that contains this file):
     pip install -r requirements.txt
-    python app.py or .\.venv\Scripts\python app.py if you want to use GPU 
+    python app.py or .\\.venv\\Scripts\\python app.py if you want to use GPU
 
 Then open http://127.0.0.1:5000 (or set HOST / PORT env vars — see __main__ block).
 """
@@ -109,6 +109,32 @@ def run_dncnn(model, device, rgb_uint8: np.ndarray) -> np.ndarray:
         out = model(t)
     denoised = out.squeeze().cpu().permute(1, 2, 0).numpy()
     return np.clip(denoised * 255.0, 0, 255).astype(np.uint8)
+
+
+def degrade_rgb_pipeline(rgb_uint8: np.ndarray, scale: float = 0.2, sigma: float = 50.0) -> np.ndarray:
+    """
+    Apply the same degradation pipeline described in the report/pipeline scripts:
+      1) Downsample to (scale * width/height) with INTER_AREA
+      2) Upsample back to original size with INTER_CUBIC
+      3) Add Gaussian noise N(0, sigma^2) and clip to [0, 255]
+
+    Input/Output: uint8 RGB array (H, W, 3)
+    """
+    if rgb_uint8.ndim != 3 or rgb_uint8.shape[2] != 3:
+        raise ValueError("Expected an RGB image (H×W×3).")
+
+    h, w = rgb_uint8.shape[:2]
+    ds_w = max(1, int(round(w * scale)))
+    ds_h = max(1, int(round(h * scale)))
+
+    # Downsample then upsample (introduces blur/detail loss).
+    small = cv2.resize(rgb_uint8, (ds_w, ds_h), interpolation=cv2.INTER_AREA)
+    up = cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC).astype(np.float32)
+
+    # Gaussian noise in pixel space.
+    noise = np.random.normal(0.0, sigma, size=up.shape).astype(np.float32)
+    degraded = up + noise
+    return np.clip(degraded, 0, 255).astype(np.uint8)
 
 
 def load_dncnn_model(weights_path=None):
@@ -329,6 +355,68 @@ def enhance():
         response.headers["X-SSIM-In"] = f"{ssim_in:.5f}"
         response.headers["X-PSNR-Out"] = f"{psnr_out:.3f}"
         response.headers["X-SSIM-Out"] = f"{ssim_out:.5f}"
+    return response
+
+
+@app.route("/degrade", methods=["POST"])
+def degrade():
+    """
+    Degradation API: multipart form with fields:
+      - "image" (file): expected to be a clean RGB image
+
+    Returns:
+      - Body: degraded PNG attachment
+      - Headers: timing/device/image-size for the UI metrics table
+    """
+    if "image" not in request.files:
+        return jsonify({"error": "No image field in form."}), 400
+    f = request.files["image"]
+    if not f or not f.filename:
+        return jsonify({"error": "No file selected."}), 400
+    if not allowed_file(f.filename):
+        return jsonify({"error": f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}"}), 400
+
+    t0_total = time.perf_counter()
+    try:
+        t0_decode = time.perf_counter()
+        rgb = decode_upload_to_rgb(f)
+        decode_s = time.perf_counter() - t0_decode
+
+        t0_deg = time.perf_counter()
+        out_rgb = degrade_rgb_pipeline(rgb, scale=0.2, sigma=50.0)
+        degrade_s = time.perf_counter() - t0_deg
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Degradation failed: {e!s}"}), 500
+
+    h, w = out_rgb.shape[:2]
+
+    t0_encode = time.perf_counter()
+    out_bgr = cv2.cvtColor(out_rgb, cv2.COLOR_RGB2BGR)
+    ok, buf = cv2.imencode(".png", out_bgr)
+    if not ok:
+        return jsonify({"error": "Failed to encode output image."}), 500
+    encode_s = time.perf_counter() - t0_encode
+    t_total = time.perf_counter() - t0_total
+
+    base = Path(f.filename).stem or "image"
+    download_name = f"{base}_degraded.png"
+
+    response = make_response(send_file(
+        io.BytesIO(buf.tobytes()),
+        mimetype="image/png",
+        as_attachment=True,
+        download_name=download_name,
+    ))
+
+    response.headers["X-Processing-Time"] = f"{t_total:.2f}"
+    response.headers["X-Device"] = "cpu"
+    response.headers["X-Image-Size"] = f"{w}x{h}"
+    response.headers["X-Time-Decode"] = f"{decode_s:.4f}"
+    response.headers["X-Time-Degrade"] = f"{degrade_s:.4f}"
+    response.headers["X-Time-Encode"] = f"{encode_s:.4f}"
+    response.headers["X-Time-Total"] = f"{t_total:.4f}"
     return response
 
 

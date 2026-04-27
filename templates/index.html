@@ -184,6 +184,66 @@
       cursor: not-allowed;
     }
 
+    /* Mode toggle (Enhance vs Degrade) */
+    .mode-toggle {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+      padding: 0.85rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .mode-toggle .mode-label {
+      margin: 0;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .mode-toggle .mode-controls {
+      display: inline-flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .chip {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      padding: 0.45rem 0.7rem;
+      border-radius: 999px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+
+    .chip[aria-pressed="true"] {
+      border-color: rgba(61, 156, 245, 0.6);
+      background: rgba(61, 156, 245, 0.12);
+      color: #d9ecff;
+    }
+
+    /* Shown only in degradation mode */
+    .degrade-callout {
+      border: 1px solid rgba(61, 156, 245, 0.35);
+      background: rgba(61, 156, 245, 0.08);
+      border-radius: 10px;
+      padding: 0.85rem;
+      margin-bottom: 1rem;
+      color: var(--text);
+      font-size: 0.92rem;
+    }
+
+    .degrade-callout strong { color: #d9ecff; }
+
     /* Floating sound toggle pinned to bottom-right corner (mute button). */
     #muteBtn {
       position: fixed;
@@ -217,7 +277,12 @@
       text-align: center; /* Set the text label to the center */
     }
 
-    /* Side-by-side previews on larger screens; stacked on phones. */
+    /* Previews grid:
+       - Phones: 1 column (stacked)
+       - Desktop: auto-fit columns so:
+           * 2 visible previews -> 2 columns
+           * 3 visible previews -> 3 columns
+     */
     .preview-grid {
       display: grid;
       grid-template-columns: 1fr;
@@ -226,9 +291,9 @@
     }
 
     @media (min-width: 860px) {
-      .wrap { max-width: 980px; }
-      .preview-grid { grid-template-columns: 1fr 1fr; }
-      #preview, #resultPreview { max-height: 260px; }
+      .wrap { max-width: 1100px; }
+      .preview-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      #preview, #gtPreview, #resultPreview { max-height: 260px; }
     }
 
     .preview-label {
@@ -241,7 +306,7 @@
     }
 
     /* Small selected image preview */
-    #preview, #resultPreview {
+    #preview, #gtPreview, #resultPreview {
       display: block; /* make image behave like a block element */
       margin: 0 auto; /* set to no margin and automatically center left/right*/
       max-width: 100%; /* set image width to 100% */
@@ -431,6 +496,32 @@
     <div class="card"> 
       <!-- Floating sound toggle (positioned bottom-right via CSS #muteBtn). -->
       <button id="muteBtn" class="btn-secondary" type="button">🔊 Sound: ON</button>
+
+      <!-- Enhance vs Degrade mode selector (handled in JS). -->
+      <div class="mode-toggle" role="group" aria-label="Mode">
+        <p class="mode-label">Mode</p>
+        <div class="mode-controls">
+          <button type="button" class="chip" id="modeEnhanceBtn" aria-pressed="true">Enhance</button>
+          <button type="button" class="chip" id="modeDegradeBtn" aria-pressed="false">Degrade</button>
+        </div>
+      </div>
+
+      <!-- Mode callouts (shown/hidden in JS based on current mode) -->
+      <div class="degrade-callout" id="enhanceCallout">
+        <strong>Image enhancement mode</strong>
+        <div style="margin-top:0.35rem; color: var(--muted);">
+          Upload a <strong>noisy</strong> image, choose a model, then enhance it and download the result.
+          Optionally add a <strong>ground truth</strong> image to compute PSNR/SSIM.
+        </div>
+      </div>
+
+      <div class="degrade-callout" id="degradeCallout" hidden>
+        <strong>Image degradation mode</strong>
+        <div style="margin-top:0.35rem; color: var(--muted);">
+          Upload a <strong>clean</strong> image here to generate a degraded version using our pipeline
+          (downsample → upsample → Gaussian noise).
+        </div>
+      </div>
       <!-- The form is handled fully in JS (no page navigation).
            novalidate keeps browser-native messages from fighting our custom status UI. -->
           
@@ -447,10 +538,10 @@
           </div>
         </div> 
 
-        <div class="field">
+        <div class="field" id="groundTruthField">
           <!-- Ground truth is optional. If provided, backend computes PSNR/SSIM and returns
                those values via response headers so we can display them in "Metrics". -->
-          <label for="ground_truth">Ground truth (optional, for PSNR/SSIM. Requires original quality of uploaded image)</label>
+          <label for="ground_truth">Ground truth (optional for PSNR/SSIM. Requires original quality of uploaded image)</label>
           <div class="file-field" id="gtField">
           <div class="file-actions">
             <input type="file" id="ground_truth" name="ground_truth" accept="image/png,image/jpeg,image/webp,image/bmp,.tif,.tiff" />
@@ -460,7 +551,7 @@
         </div>
 
         <!-- value is sent as form field "model" → request.form.get("model") in app.py. -->
-        <div class="field">
+        <div class="field" id="modelField">
           <label for="model">Model</label> 
           <select id="model" name="model"> 
             <option value="dncnn">DnCNN (fast, CNN)</option> 
@@ -483,9 +574,15 @@
           <img id="preview" alt="" />
         </div>
 
+        <!-- Ground-truth preview (only shown when a GT file is selected) -->
+        <div class="preview-wrap" id="gtPreviewWrap" hidden>
+          <p class="preview-label">Ground truth preview</p>
+          <img id="gtPreview" alt="" />
+        </div>
+
         <!-- Area used to show a preview of enhanced image on the web page -->
         <div class="preview-wrap" id="resultWrap" hidden>
-          <p class="preview-label">Enhanced image preview</p>
+          <p class="preview-label" id="resultPreviewLabel">Enhanced image preview</p>
           <img id="resultPreview" alt="" />
         </div>
       </div>
@@ -529,22 +626,36 @@
     const fileField = document.getElementById("fileField");
     const previewWrap = document.getElementById("previewWrap");
     const previewImg = document.getElementById("preview");
+    const gtPreviewWrap = document.getElementById("gtPreviewWrap");
+    const gtPreviewImg = document.getElementById("gtPreview");
     const resultWrap = document.getElementById("resultWrap");
+    const resultPreviewLabel = document.getElementById("resultPreviewLabel");
     const resultPreview = document.getElementById("resultPreview");
     const metricsWrap = document.getElementById("metricsWrap");
     const metricsBody = document.getElementById("metricsBody");
     const gtInput = document.getElementById("ground_truth");
     const gtField = document.getElementById("gtField");
+    const groundTruthField = document.getElementById("groundTruthField");
+    const modelField = document.getElementById("modelField");
     const clearImageBtn = document.getElementById("clearImageBtn");
     const clearGtBtn = document.getElementById("clearGtBtn");
     // Controls whether we play any optional SFX. Must be mutable (toggled by the button).
     let isMuted = false;
     const muteBtn = document.getElementById("muteBtn");
+    const modeEnhanceBtn = document.getElementById("modeEnhanceBtn");
+    const modeDegradeBtn = document.getElementById("modeDegradeBtn");
+    const enhanceCallout = document.getElementById("enhanceCallout");
+    const degradeCallout = document.getElementById("degradeCallout");
+
+    // Current mode controls what the submit button does.
+    // - "enhance": sends to /enhance and shows enhanced preview + full metrics
+    // - "degrade": sends to /degrade and shows degraded preview + degradation metrics
+    let uiMode = "enhance";
 
     // Sound effects (purely optional/UX).
     // NOTE: Browsers may block audio unless it follows a user gesture. We fail silently in that case.
     // IMPORTANT: Use "/static/..." paths so Flask serves them correctly (relative paths can break on sub-routes).
-    const uploadSound = new Audio("/static/sounds/pop.mp3");
+    const uploadSound = new Audio("/static/sounds/select.wav");
     const completeSound = new Audio("/static/sounds/finished.wav");
     const removeSound = new Audio("/static/sounds/remove.wav");
     const loadSound = new Audio("/static/sounds/loading.wav");
@@ -564,6 +675,7 @@
     // Object URLs are used to preview local files/blobs without uploading them anywhere.
     // Always revoke old URLs to avoid memory leaks during repeated use.
     let previewObjectUrl = null;
+    let gtPreviewObjectUrl = null;
     let resultObjectUrl = null; 
 
     // Metric tooltip contents (label -> HTML snippet).
@@ -572,6 +684,7 @@
       "Device": "Where the model ran. <strong>GPU</strong> means CUDA on your NVIDIA card; <strong>CPU</strong> means it ran on your processor.",
       "Image size": "Resolution of the input image in pixels (width × height).",
       "Decode (s)": "Time to read + decode the uploaded image into memory (e.g., PIL/OpenCV load).",
+      "Degrade (s)": "Time to apply the pipeline degradation (downsample → upsample → Gaussian noise).",
       "Model load (s)": "Time to initialize/load the model + weights. Often near 0 after the first run (cached in memory).",
       "Inference (s)": "Time spent running the model forward pass (the actual enhancement).",
       "Encode (s)": "Time to encode the output image (PNG) to send back to the browser.",
@@ -617,6 +730,14 @@
       if (previewObjectUrl) {
         URL.revokeObjectURL(previewObjectUrl);
         previewObjectUrl = null;
+      }
+    }
+
+    // Release the ground-truth preview URL (if any).
+    function revokeGtPreviewUrl() {
+      if (gtPreviewObjectUrl) {
+        URL.revokeObjectURL(gtPreviewObjectUrl);
+        gtPreviewObjectUrl = null;
       }
     }
 
@@ -788,6 +909,22 @@
       if (clearImageBtn) clearImageBtn.disabled = false;
     }
 
+    // Update the ground-truth preview (shown only when a GT file is selected).
+    function updateGroundTruthPreview(file) {
+      revokeGtPreviewUrl();
+      if (!gtPreviewImg || !gtPreviewWrap) return;
+      if (!file || !file.type.startsWith("image/")) {
+        gtPreviewImg.removeAttribute("src");
+        gtPreviewImg.removeAttribute("alt");
+        gtPreviewWrap.hidden = true;
+        return;
+      }
+      gtPreviewObjectUrl = URL.createObjectURL(file);
+      gtPreviewImg.src = gtPreviewObjectUrl;
+      gtPreviewImg.alt = "Preview of ground truth " + (file.name || "image");
+      gtPreviewWrap.hidden = false;
+    }
+
     // "Remove" for the main input image.
     // Note: this does not delete any file from disk — it only clears the browser's selection.
     function clearSelectedImage() {
@@ -796,6 +933,13 @@
       resetUiForNewInputImage();
       updateImagePreview(null);
       setStatus("", "");
+    }
+
+    // Used when we need to forcibly clear the selected input image (e.g., switching modes).
+    function clearSelectedImageSilently() {
+      fileInput.value = "";
+      revokePreviewUrl();
+      updateImagePreview(null); // also disables the Remove button
     }
 
     if (clearImageBtn) {
@@ -820,6 +964,44 @@
       });
     }
 
+    function applyMode(nextMode) {
+      uiMode = nextMode;
+      const isDegrade = uiMode === "degrade";
+
+      if (modeEnhanceBtn) modeEnhanceBtn.setAttribute("aria-pressed", isDegrade ? "false" : "true");
+      if (modeDegradeBtn) modeDegradeBtn.setAttribute("aria-pressed", isDegrade ? "true" : "false");
+
+      if (enhanceCallout) enhanceCallout.hidden = isDegrade;
+      if (degradeCallout) degradeCallout.hidden = !isDegrade;
+      if (groundTruthField) groundTruthField.hidden = isDegrade; // GT not used in degrade mode
+      if (modelField) modelField.hidden = isDegrade; // model selection not used in degrade mode
+
+      // Update primary CTA label and result preview label.
+      if (btn) btn.textContent = isDegrade ? "Degrade & download" : "Enhance & download";
+      if (resultPreviewLabel) resultPreviewLabel.textContent = isDegrade ? "Degraded image preview" : "Enhanced image preview";
+
+      // Changing modes invalidates any current result/metrics.
+      resetUiForNewInputImage();
+
+      // Also clear the currently selected input image + preview so each mode starts fresh.
+      clearSelectedImageSilently();
+
+      // And clear any selected ground-truth + preview (especially important when entering degrade mode).
+      if (gtInput) gtInput.value = "";
+      updateGroundTruthButtonState();
+      revokeGtPreviewUrl();
+      updateGroundTruthPreview(null);
+    }
+
+    if (modeEnhanceBtn) modeEnhanceBtn.addEventListener("click", () => {
+      playSound(clickSound);
+      applyMode("enhance");
+    });
+    if (modeDegradeBtn) modeDegradeBtn.addEventListener("click", () => {
+      playSound(clickSound);
+      applyMode("degrade");
+    });
+
     // Whenever the user provides a new *input* image (pick, drop, etc.), old result/metrics become stale.
     // Keep this reset logic centralized so we don't forget a path (picker, drop, remove).
     function resetUiForNewInputImage() {
@@ -842,10 +1024,15 @@
       if (gtInput) gtInput.value = "";
       clearMetrics(); // metrics depend on GT, so reset them if GT changes
       updateGroundTruthButtonState();
+      revokeGtPreviewUrl();
+      updateGroundTruthPreview(null);
     }
 
     if (clearGtBtn) {
-      clearGtBtn.addEventListener("click", clearGroundTruth);
+      clearGtBtn.addEventListener("click", () => {
+        playSound(removeSound);
+        clearGroundTruth();
+      });
     }
 
     // If GT changes, any shown PSNR/SSIM is no longer valid, so clear it.
@@ -853,6 +1040,11 @@
       gtInput.addEventListener("change", () => {
         clearMetrics(); // if user changes GT, old metrics are no longer valid
         updateGroundTruthButtonState();
+        updateGroundTruthPreview(gtInput.files && gtInput.files[0]);
+        const f = gtInput.files && gtInput.files[0];
+        if (f && f.type.startsWith("image/")) {
+          playSound(uploadSound);
+        }
       });
     }
 
@@ -890,6 +1082,8 @@
         gtInput.files = dt.files;
         clearMetrics();
         updateGroundTruthButtonState();
+        updateGroundTruthPreview(file);
+        playSound(uploadSound);
       });
     }
 
@@ -958,7 +1152,7 @@
     //   - If error: show backend error message
     form.addEventListener("submit", async (e) => {
       e.preventDefault(); // keep user on this page; we talk to Flask via fetch()
-      const model = document.getElementById("model").value;
+      const model = document.getElementById("model") ? document.getElementById("model").value : "dncnn";
 
       //Make sure file was selected 
       if (!fileInput.files || !fileInput.files[0]) {
@@ -970,17 +1164,20 @@
       setStatus("Running enhancement…", "");
       btn.disabled = true;
       startLoadingSound();
-      // Build the form data exactly how Flask wants it 
+      // Build the form data exactly how Flask wants it
       const fd = new FormData();
       fd.append("image", fileInput.files[0]);
-      fd.append("model", model);
-      if (gtInput && gtInput.files && gtInput.files[0]) {
-        fd.append("ground_truth", gtInput.files[0]);
+      if (uiMode === "enhance") {
+        fd.append("model", model);
+        if (gtInput && gtInput.files && gtInput.files[0]) {
+          fd.append("ground_truth", gtInput.files[0]);
+        }
       }
 
       try { 
         //Send file and model choice to Flask backedn 
-        const res = await fetch("/enhance", { method: "POST", body: fd });
+        const endpoint = uiMode === "degrade" ? "/degrade" : "/enhance";
+        const res = await fetch(endpoint, { method: "POST", body: fd });
         const ct = res.headers.get("content-type") || "";
 
         // returns JSON { error: "..." } for most failures.
@@ -1001,6 +1198,7 @@
         const imgSize = res.headers.get("X-Image-Size");
 
         const tDecode = res.headers.get("X-Time-Decode");
+        const tDegrade = res.headers.get("X-Time-Degrade");
         const tLoad = res.headers.get("X-Time-Model-Load");
         const tInfer = res.headers.get("X-Time-Infer");
         const tEncode = res.headers.get("X-Time-Encode");
@@ -1048,6 +1246,7 @@
         addMetricRow("Device", deviceLabel);
         addMetricRow("Image size", imgSize || "unknown");
         addMetricRow("Decode (s)", tDecode);
+        if (tDegrade) addMetricRow("Degrade (s)", tDegrade);
         addMetricRow("Model load (s)", tLoad);
         addMetricRow("Inference (s)", tInfer);
         addMetricRow("Encode (s)", tEncode);
